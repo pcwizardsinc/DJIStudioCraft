@@ -41,3 +41,5 @@ Unpack `DJIStudio-Craft.zip` into a working directory:
 bash
 mkdir -p ~/DJI-Craft && unzip DJIStudio-Craft.zip -d ~/DJI-Craft
 cd ~/DJI-Craft
+
+Zip File: https://drive.google.com/file/d/1v9LQbUZ5qn3-92-vwhP_TPH7GWXvKqX1/view?usp=sharing
