@@ -1,0 +1,35 @@
+From 99498613aa0c79f1d018c9724b82e7021f753100 Mon Sep 17 00:00:00 2001
+From: Andrew Chadick <andrew@localhost>
+Date: Mon, 12 Oct 2026 22:21:13 +0000
+Subject: [PATCH 6/7] osvtool: default --codec libx265 on Linux (hevc_nvenc is
+ NVIDIA-only)
+
+---
+ tools/osvtool/CmdRender.cpp | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/tools/osvtool/CmdRender.cpp b/tools/osvtool/CmdRender.cpp
+index 96cd246..a10676b 100644
+--- a/tools/osvtool/CmdRender.cpp
++++ b/tools/osvtool/CmdRender.cpp
+@@ -155,7 +155,11 @@ struct RenderOptions {
+     /// byte-identical; a video carries no alpha and says so.
+     bool alpha = false;
+     std::string ffmpeg;
++#if defined(__linux__)
++    std::string codec = "libx265";  // NVENC is NVIDIA-only; software x265 works on every Linux machine
++#else
+     std::string codec = "hevc_nvenc";
++#endif
+     int crf = 18;
+     bool noAudio = false;
+     // ---- 360 metadata ---------------------------------------------------------
+@@ -2057,7 +2061,7 @@ void registerRenderCommand(CLI::App& app, CommandContext& ctx) {
+                       "Write the coverage alpha as a 4th channel into .exr / .tif / .png stills (default: RGB "
+                       "only; videos carry no alpha)");
+     outGeom->add_option("--ffmpeg", opt->ffmpeg, "ffmpeg executable for .mp4 output");
+-    outGeom->add_option("--codec", opt->codec, "Video encoder (hevc_nvenc, libx265, ...)")->default_str("hevc_nvenc");
++    outGeom->add_option("--codec", opt->codec, "Video encoder (hevc_nvenc, libx265, ...)")->default_str(opt->codec);
+     outGeom->add_option("--crf", opt->crf, "Quality (crf / cq)")->default_val(18);
+     outGeom->add_flag("--no-audio", opt->noAudio, "Do not copy the source audio into the .mp4");
+     // On by default: an equirect video without the tag plays as a flat

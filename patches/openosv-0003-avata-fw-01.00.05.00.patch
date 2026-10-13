@@ -1,0 +1,103 @@
+From 064cc464103d14b017a4002b952d2f666b1e133c Mon Sep 17 00:00:00 2001
+From: Andrew Chadick <andrew@localhost>
+Date: Mon, 12 Oct 2026 22:21:13 +0000
+Subject: [PATCH 3/7] Avata 360 fw 01.00.05.00: rebuild lens extrinsic from
+ Euler angles, fall back to native_refine_far
+
+---
+ src/osv/meta/CalibrationSelector.cpp |  8 ++++
+ src/osv/meta/DjmdDecoder.cpp         | 55 ++++++++++++++++++++++++++++
+ 2 files changed, 63 insertions(+)
+
+diff --git a/src/osv/meta/CalibrationSelector.cpp b/src/osv/meta/CalibrationSelector.cpp
+index 98ca6d1..69500d2 100644
+--- a/src/osv/meta/CalibrationSelector.cpp
++++ b/src/osv/meta/CalibrationSelector.cpp
+@@ -157,6 +157,14 @@ std::optional<CalibrationSet> nativePair(const StreamMeta& stream, bool preferRe
+                                    P::fieldName(secondS), P::fieldName(secondM)));
+         return pair;
+     }
++    // Avata 360 (firmware 01.00.05.00) calibrates only the refined far pair
++    // (3/4); slots 1/2 and 11/12 hold no intrinsics.  A drone films distant
++    // scenes, so that pair is the right last resort before giving up.
++    if (auto pair = CalibrationSelector::pairFromSlots(stream, P::NativeRefineFarSlave, P::NativeRefineFarMaster)) {
++        note(warnings, std::format("native pairs unusable; using {}/{}", P::fieldName(P::NativeRefineFarSlave),
++                                   P::fieldName(P::NativeRefineFarMaster)));
++        return pair;
++    }
+     return std::nullopt;
+ }
+ 
+diff --git a/src/osv/meta/DjmdDecoder.cpp b/src/osv/meta/DjmdDecoder.cpp
+index 464270d..15a5ff0 100644
+--- a/src/osv/meta/DjmdDecoder.cpp
++++ b/src/osv/meta/DjmdDecoder.cpp
+@@ -525,6 +525,60 @@ Result<ClipMeta> DjmdDecoder::decodeClipMeta(ByteSpan body, std::vector<std::str
+     return clip;
+ }
+ 
++// -----------------------------------------------------------------------------
++//  Extrinsic from the Euler angles (Avata 360 firmware 01.00.05.00)
++// -----------------------------------------------------------------------------
++//
++//  Avata 360 clips from firmware 01.00.05.00 (proto 02.00.11) carry a full
++//  calibrated record - fx/fy/cx/cy, k, size, the Euler yaw/pitch/roll at
++//  fields 12-14 and cam_imu_extri_q at 26 - but no cam_extri_q (28), and the
++//  `q` copy (21) is zero-filled.  On every record of the Osmo 360 sample clip
++//  the Euler angles are the same rotation as cam_extri_q, to 1e-5 degrees, as
++//      q = Ry(yaw) * Rz(roll) * Rx(pitch)
++//  so the missing quaternion is rebuilt from them.  Applied to the Avata 360
++//  records it puts the master axis on body +Y, the slave on -Y and image-down
++//  on -Z: the documented rig (docs/GEOMETRY.md).  Only used when field 28 is
++//  absent and `q` holds no rotation, so the Osmo 360 path is unchanged.
++
++namespace {
++
++void deriveExtrinsicFromEuler(DewarpParams& d) noexcept {
++    if (d.camExtriQ.present) {
++        return;
++    }
++    if (d.q.size() == 4 && (d.q[0] != 0.0f || d.q[1] != 0.0f || d.q[2] != 0.0f || d.q[3] != 0.0f)) {
++        return;
++    }
++    if (!d.present.test(12) || !d.present.test(13) || !d.present.test(14) || !(d.fx > 0.0f)) {
++        return;
++    }
++    const double half = 0.5 * 3.14159265358979323846 / 180.0;
++    const double y = d.yaw * half, r = d.roll * half, p = d.pitch * half;
++    if (!std::isfinite(y) || !std::isfinite(r) || !std::isfinite(p)) {
++        return;
++    }
++    // Hamilton products: qy * qz * qx.
++    const double cy = std::cos(y), sy = std::sin(y);
++    const double cz = std::cos(r), sz = std::sin(r);
++    const double cx = std::cos(p), sx = std::sin(p);
++    // a = qy * qz  (qy = (cy, 0, sy, 0), qz = (cz, 0, 0, sz))
++    const double aw = cy * cz, ax = sy * sz, ay = sy * cz, az = cy * sz;
++    // b = a * qx   (qx = (cx, sx, 0, 0))
++    const double bw = aw * cx - ax * sx;
++    const double bx = aw * sx + ax * cx;
++    const double by = ay * cx + az * sx;
++    const double bz = az * cx - ay * sx;
++    d.camExtriQ.w = static_cast<float>(bw);
++    d.camExtriQ.x = static_cast<float>(bx);
++    d.camExtriQ.y = static_cast<float>(by);
++    d.camExtriQ.z = static_cast<float>(bz);
++    d.camExtriQ.present = true;
++    log::debug("meta: cam_extri_q absent; rebuilt from Euler yaw {:.3f} pitch {:.3f} roll {:.3f}", d.yaw, d.pitch,
++               d.roll);
++}
++
++}  // namespace
++
+ // -----------------------------------------------------------------------------
+ //  DewarpParams
+ // -----------------------------------------------------------------------------
+@@ -594,6 +648,7 @@ Result<DewarpParams> DjmdDecoder::decodeDewarp(ByteSpan body, std::vector<std::s
+     if (decoded == 0 && !clean) {
+         return Error{ErrorCode::Malformed, "DewarpParams: no decodable field"};
+     }
++    deriveExtrinsicFromEuler(d);
+     return d;
+ }
+ 

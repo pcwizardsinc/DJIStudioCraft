@@ -1,0 +1,8 @@
+/*
+!/.gitignore
+!/openosv.spec
+!/patches/
+!/director/
+!/build-openosv-rpm.sh
+!/README.md
+!/io.github.kemerd.OpenOSVStudio.*

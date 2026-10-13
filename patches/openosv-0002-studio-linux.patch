@@ -1,0 +1,213 @@
+From 9c024893adaa6ede0c0b22a4f71310dbf48e28d8 Mon Sep 17 00:00:00 2001
+From: Andrew Chadick <andrew@localhost>
+Date: Mon, 12 Oct 2026 22:21:13 +0000
+Subject: [PATCH 2/7] OpenOSV Studio on Linux: zenity file dialogs,
+ systemd-inhibit, Fedora fonts, GNOME app id
+
+---
+ tools/osvgui/Platform.cpp | 125 +++++++++++++++++++++++++++++++++++---
+ tools/osvgui/Style.cpp    |  10 ++-
+ tools/osvgui/main.cpp     |   9 +++
+ 3 files changed, 133 insertions(+), 11 deletions(-)
+
+diff --git a/tools/osvgui/Platform.cpp b/tools/osvgui/Platform.cpp
+index 4f37098..f15d08f 100644
+--- a/tools/osvgui/Platform.cpp
++++ b/tools/osvgui/Platform.cpp
+@@ -24,7 +24,9 @@
+ #include <shlobj.h>
+ #include <shobjidl.h>
+ #else
++#include <cerrno>
+ #include <climits>
++#include <csignal>
+ #include <spawn.h>
+ #include <sys/wait.h>
+ #include <unistd.h>
+@@ -451,22 +453,130 @@ void setTaskbarProgress(void*, double, bool, bool) noexcept {}
+ void styleTitleBar(void*, bool, unsigned) noexcept {}
+ 
+ #if !defined(__APPLE__)
+-// ---- no native dialogs outside Windows and macOS: drag and drop instead -------
++// ---- Linux: GNOME / GTK file dialogs through zenity -----------------------
++//
++// zenity ships with GNOME (Fedora Workstation installs it), shows the native
++// GTK file chooser and prints the chosen paths on stdout, so osvgui needs no
++// GTK dependency of its own.  When zenity is missing, haveDialogs() reports
++// false and the UI falls back to drag and drop, exactly as before.
++
++namespace {
++
++/// Run `zenity <args...>` and return the selected paths, one per line.
++/// Arguments go straight to execvp: no shell, so nothing is ever quoted.
++std::vector<fs::path> runZenity(std::vector<std::string> args) noexcept {
++    std::vector<fs::path> out;
++    try {
++        int fds[2];
++        if (::pipe(fds) != 0) {
++            return out;
++        }
++        posix_spawn_file_actions_t actions;
++        ::posix_spawn_file_actions_init(&actions);
++        ::posix_spawn_file_actions_adddup2(&actions, fds[1], STDOUT_FILENO);
++        ::posix_spawn_file_actions_addclose(&actions, fds[0]);
++        ::posix_spawn_file_actions_addclose(&actions, fds[1]);
++
++        args.insert(args.begin(), "zenity");
++        std::vector<char*> argv;
++        for (auto& a : args) {
++            argv.push_back(a.data());
++        }
++        argv.push_back(nullptr);
++
++        pid_t pid = -1;
++        const int rc = ::posix_spawnp(&pid, "zenity", &actions, nullptr, argv.data(), environ);
++        ::posix_spawn_file_actions_destroy(&actions);
++        ::close(fds[1]);
++        if (rc != 0 || pid <= 0) {
++            ::close(fds[0]);
++            return out;
++        }
++
++        std::string text;
++        char buffer[4096];
++        for (;;) {
++            const ssize_t n = ::read(fds[0], buffer, sizeof buffer);
++            if (n > 0) {
++                text.append(buffer, static_cast<std::size_t>(n));
++            } else if (n == 0 || errno != EINTR) {
++                break;
++            }
++        }
++        ::close(fds[0]);
++        int status = 0;
++        ::waitpid(pid, &status, 0);
++        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
++            return out;  // cancelled
++        }
++
++        std::size_t start = 0;
++        while (start < text.size()) {
++            std::size_t end = text.find('\n', start);
++            if (end == std::string::npos) {
++                end = text.size();
++            }
++            if (end > start) {
++                out.push_back(pathFromUtf8(text.substr(start, end - start)));
++            }
++            start = end + 1;
++        }
++    } catch (...) {
++        out.clear();
++    }
++    return out;
++}
++
++/// systemd-inhibit child that keeps the session awake while renders run.
++pid_t g_inhibitPid = -1;
++
++}  // namespace
+ 
+ std::vector<fs::path> chooseClips(void*) noexcept {
+-    return {};
++    return runZenity({"--file-selection", "--multiple", "--separator=\n", "--title=Add clips",
++                      "--file-filter=DJI 360 clips | *.OSV *.osv *.LRF *.lrf", "--file-filter=All files | *"});
+ }
+ 
+-std::vector<fs::path> chooseFolders(void*, const char*, bool) noexcept {
+-    return {};
++std::vector<fs::path> chooseFolders(void*, const char* title, bool multiple) noexcept {
++    std::vector<std::string> args{"--file-selection", "--directory", "--separator=\n",
++                                  std::string("--title=") + (title ? title : "Choose folder")};
++    if (multiple) {
++        args.emplace_back("--multiple");
++    }
++    return runZenity(std::move(args));
+ }
+ 
+-std::optional<fs::path> chooseProgram(void*, const char*) noexcept {
+-    return std::nullopt;
++std::optional<fs::path> chooseProgram(void*, const char* title) noexcept {
++    auto picked = runZenity({"--file-selection", std::string("--title=") + (title ? title : "Choose program")});
++    if (picked.empty()) {
++        return std::nullopt;
++    }
++    return picked.front();
+ }
+ 
+ bool haveDialogs() noexcept {
+-    return false;
++    return !findOnPath("zenity").empty();
++}
++
++void keepAwake(bool awake) noexcept {
++    try {
++        if (awake && g_inhibitPid <= 0) {
++            // Holds an idle/sleep inhibitor until killed; GNOME honours it.
++            std::string p0 = "systemd-inhibit", p1 = "--what=idle:sleep", p2 = "--who=OpenOSV Studio",
++                        p3 = "--why=Rendering 360 video", p4 = "sleep", p5 = "infinity";
++            char* argv[] = {p0.data(), p1.data(), p2.data(), p3.data(), p4.data(), p5.data(), nullptr};
++            pid_t pid = -1;
++            if (::posix_spawnp(&pid, "systemd-inhibit", nullptr, nullptr, argv, environ) == 0 && pid > 0) {
++                g_inhibitPid = pid;
++            }
++        } else if (!awake && g_inhibitPid > 0) {
++            ::kill(g_inhibitPid, SIGTERM);
++            int status = 0;
++            ::waitpid(g_inhibitPid, &status, 0);
++            g_inhibitPid = -1;
++        }
++    } catch (...) {
++    }
+ }
+ 
+ namespace {
+@@ -499,7 +609,6 @@ void openWithDefaultApp(const fs::path& path) noexcept {
+     xdgOpen(path.string());
+ }
+ 
+-void keepAwake(bool) noexcept {}
+ #endif  // !__APPLE__
+ 
+ #endif  // _WIN32
+diff --git a/tools/osvgui/Style.cpp b/tools/osvgui/Style.cpp
+index a65a4ac..b7e300d 100644
+--- a/tools/osvgui/Style.cpp
++++ b/tools/osvgui/Style.cpp
+@@ -257,9 +257,13 @@ void loadFonts() noexcept {
+         const std::string bold = firstExisting({dir / "SFNS.ttf", dir / "Helvetica.ttc"});
+         const std::string mono = firstExisting({dir / "SFNSMono.ttf", dir / "Menlo.ttc", dir / "Monaco.ttf"});
+ #else
+-        const std::string ui = firstExisting({dir / "truetype/dejavu/DejaVuSans.ttf"});
+-        const std::string bold = firstExisting({dir / "truetype/dejavu/DejaVuSans-Bold.ttf"});
+-        const std::string mono = firstExisting({dir / "truetype/dejavu/DejaVuSansMono.ttf"});
++        // Fedora (dejavu-sans-fonts, dejavu-sans-mono-fonts), then Debian/Ubuntu.
++        const std::string ui = firstExisting({dir / "dejavu-sans-fonts/DejaVuSans.ttf",
++                                              dir / "truetype/dejavu/DejaVuSans.ttf"});
++        const std::string bold = firstExisting({dir / "dejavu-sans-fonts/DejaVuSans-Bold.ttf",
++                                                dir / "truetype/dejavu/DejaVuSans-Bold.ttf"});
++        const std::string mono = firstExisting({dir / "dejavu-sans-mono-fonts/DejaVuSansMono.ttf",
++                                                dir / "truetype/dejavu/DejaVuSansMono.ttf"});
+ #endif
+         // The first font added is ImGui's default.
+         g_fonts.ui = addFont(ui, kBodySize);
+diff --git a/tools/osvgui/main.cpp b/tools/osvgui/main.cpp
+index dfc4371..4494501 100644
+--- a/tools/osvgui/main.cpp
++++ b/tools/osvgui/main.cpp
+@@ -315,6 +315,15 @@ int run(const std::vector<std::string>& rawArgs) {
+     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+ #endif
+     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);  // shown once placed: no flash at the wrong size
++#if defined(__linux__)
++    // Match the installed .desktop file (io.github.kemerd.OpenOSVStudio) so
++    // GNOME shows the right name and icon in the dash and Alt-Tab.
++    glfwWindowHintString(GLFW_X11_CLASS_NAME, "io.github.kemerd.OpenOSVStudio");
++    glfwWindowHintString(GLFW_X11_INSTANCE_NAME, "io.github.kemerd.OpenOSVStudio");
++#if defined(GLFW_WAYLAND_APP_ID)
++    glfwWindowHintString(GLFW_WAYLAND_APP_ID, "io.github.kemerd.OpenOSVStudio");
++#endif
++#endif
+ 
+     // A copy: `options` moves into the app further down.
+     const WindowState ws = options.settings.window;

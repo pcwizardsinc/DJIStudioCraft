@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=360 Director
+GenericName=360 Video Camera Paths
+Comment=Direct camera moves inside 360 video and render flat clips
+Exec=xdg-open /usr/share/openosv/director/360-director.html
+Icon=io.github.kemerd.OpenOSVStudio
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;
+Keywords=360;reframe;keyframe;Avata;OpenOSV;

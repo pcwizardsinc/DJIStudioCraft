@@ -1,0 +1,18 @@
+[Desktop Entry]
+Type=Application
+Name=OpenOSV Studio
+GenericName=360 Video Stitcher
+Comment=Stitch, reframe and render DJI Avata 360 and Osmo 360 footage
+# RUSTICL_ENABLE turns on Mesa's OpenCL driver for AMD GPUs (radeonsi), so
+# osvtool can render on the GPU. Harmless when mesa-libOpenCL is not installed.
+Exec=env RUSTICL_ENABLE=radeonsi osvgui
+Icon=io.github.kemerd.OpenOSVStudio
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;
+Keywords=DJI;360;OSV;Avata;Osmo;reframe;stitch;D-Log;keyframe;director;
+StartupWMClass=io.github.kemerd.OpenOSVStudio
+Actions=director;
+
+[Desktop Action director]
+Name=360 Director
+Exec=xdg-open /usr/share/openosv/director/360-director.html

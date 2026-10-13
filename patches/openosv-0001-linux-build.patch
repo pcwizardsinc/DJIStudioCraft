@@ -1,0 +1,86 @@
+From 472010176bf63809efc5c8dd386c60a55654cd52 Mon Sep 17 00:00:00 2001
+From: Andrew Chadick <andrew@localhost>
+Date: Mon, 12 Oct 2026 22:21:13 +0000
+Subject: [PATCH 1/7] Linux build: FFmpeg via pkg-config, distro tinyexr,
+ bundled Dear ImGui fallback
+
+---
+ CMakeLists.txt        | 34 +++++++++++++++++++++++++++++++++-
+ cmake/OsvFFmpeg.cmake | 12 +++++++++++-
+ 2 files changed, 44 insertions(+), 2 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 71844ee..0107f03 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -100,7 +100,22 @@ find_package(fmt CONFIG REQUIRED)
+ find_package(spdlog CONFIG REQUIRED)
+ find_package(nlohmann_json CONFIG REQUIRED)
+ find_package(CLI11 CONFIG REQUIRED)
+-find_package(tinyexr CONFIG REQUIRED)
++find_package(tinyexr CONFIG QUIET)
++if(NOT TARGET tinyexr::tinyexr AND NOT TARGET unofficial::tinyexr::tinyexr)
++  # Some distributions ship tinyexr without a CMake package: find it by hand.
++  find_path(OSV_TINYEXR_INCLUDE_DIR tinyexr.h REQUIRED)
++  find_library(OSV_TINYEXR_LIBRARY tinyexr REQUIRED)
++  add_library(tinyexr::tinyexr UNKNOWN IMPORTED)
++  set_target_properties(tinyexr::tinyexr PROPERTIES
++    IMPORTED_LOCATION "${OSV_TINYEXR_LIBRARY}"
++    INTERFACE_INCLUDE_DIRECTORIES "${OSV_TINYEXR_INCLUDE_DIR}")
++endif()
++# vcpkg names the target unofficial::tinyexr::tinyexr; upstream/distro builds
++# (Fedora, Debian) export tinyexr::tinyexr.  Alias one to the other.
++if(NOT TARGET unofficial::tinyexr::tinyexr AND TARGET tinyexr::tinyexr)
++  add_library(unofficial::tinyexr::tinyexr INTERFACE IMPORTED)
++  target_link_libraries(unofficial::tinyexr::tinyexr INTERFACE tinyexr::tinyexr)
++endif()
+ 
+ # OpenOSV Studio (tools/osvgui), the desktop app in front of osvtool, draws
+ # with Dear ImGui on GLFW + OpenGL 3.  vcpkg.json asks for both on Windows
+@@ -110,6 +125,23 @@ find_package(tinyexr CONFIG REQUIRED)
+ find_package(imgui CONFIG QUIET)
+ find_package(glfw3 CONFIG QUIET)
+ find_package(OpenGL QUIET)
++# Linux: distributions either do not package Dear ImGui or package a release
++# older than the 1.92 API osvgui uses (ImTextureRef, PushFont with a size), so
++# a Linux build can point OSV_IMGUI_SOURCE_DIR at an unpacked ImGui release
++# tarball and the glfw + opengl3 backends are compiled into a static library.
++set(OSV_IMGUI_SOURCE_DIR "" CACHE PATH "Dear ImGui (>= 1.92) source tree to build when no imgui package is found")
++if(NOT TARGET imgui::imgui AND OSV_IMGUI_SOURCE_DIR AND TARGET glfw AND TARGET OpenGL::GL)
++  set(_imgui "${OSV_IMGUI_SOURCE_DIR}")
++  add_library(osv_imgui STATIC
++    "${_imgui}/imgui.cpp" "${_imgui}/imgui_draw.cpp" "${_imgui}/imgui_tables.cpp"
++    "${_imgui}/imgui_widgets.cpp" "${_imgui}/imgui_demo.cpp"
++    "${_imgui}/backends/imgui_impl_glfw.cpp" "${_imgui}/backends/imgui_impl_opengl3.cpp"
++    "${_imgui}/misc/cpp/imgui_stdlib.cpp")
++  target_include_directories(osv_imgui SYSTEM PUBLIC "${_imgui}" "${_imgui}/backends" "${_imgui}/misc/cpp")
++  target_link_libraries(osv_imgui PUBLIC glfw OpenGL::GL ${CMAKE_DL_LIBS})
++  add_library(imgui::imgui ALIAS osv_imgui)
++  message(STATUS "Dear ImGui: building from ${_imgui}")
++endif()
+ if(TARGET imgui::imgui AND TARGET glfw AND TARGET OpenGL::GL)
+   set(_osv_gui_available ON)
+ else()
+diff --git a/cmake/OsvFFmpeg.cmake b/cmake/OsvFFmpeg.cmake
+index c0dd5cb..a7bbee1 100644
+--- a/cmake/OsvFFmpeg.cmake
++++ b/cmake/OsvFFmpeg.cmake
+@@ -24,7 +24,17 @@ endforeach()
+ 
+ # vcpkg ships a FindFFMPEG.cmake wrapper that fills FFMPEG_INCLUDE_DIRS,
+ # FFMPEG_LIBRARIES and FFMPEG_LIBRARY_DIRS for the enabled components.
+-find_package(FFMPEG REQUIRED)
++# Linux distributions (Fedora, Debian/Ubuntu) ship FFmpeg with pkg-config
++# files rather than a CMake config, so fall back to pkg-config there.
++find_package(FFMPEG QUIET)
++if(NOT FFMPEG_FOUND)
++  find_package(PkgConfig REQUIRED)
++  pkg_check_modules(OSV_PC_FFMPEG REQUIRED IMPORTED_TARGET
++                    libavcodec libavformat libavutil libswscale libswresample)
++  set(FFMPEG_INCLUDE_DIRS ${OSV_PC_FFMPEG_INCLUDE_DIRS})
++  set(FFMPEG_LIBRARY_DIRS ${OSV_PC_FFMPEG_LIBRARY_DIRS})
++  set(FFMPEG_LIBRARIES PkgConfig::OSV_PC_FFMPEG)
++endif()
+ 
+ add_library(osv_ffmpeg INTERFACE)
+ target_include_directories(osv_ffmpeg INTERFACE ${FFMPEG_INCLUDE_DIRS})

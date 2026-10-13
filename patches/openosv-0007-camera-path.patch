@@ -1,0 +1,334 @@
+From ae85b257c13d486d01236ff9755fb126f38e876c Mon Sep 17 00:00:00 2001
+From: Andrew Chadick <andrew@localhost>
+Date: Mon, 12 Oct 2026 22:21:13 +0000
+Subject: [PATCH 7/7] osvtool render --path / --path-start: animate the reframe
+ view from a 360 Director camera path
+
+---
+ tools/osvtool/CameraPath.h  | 167 ++++++++++++++++++++++++++++++++++++
+ tools/osvtool/CmdRender.cpp |  84 +++++++++++++++++-
+ 2 files changed, 248 insertions(+), 3 deletions(-)
+ create mode 100644 tools/osvtool/CameraPath.h
+
+diff --git a/tools/osvtool/CameraPath.h b/tools/osvtool/CameraPath.h
+new file mode 100644
+index 0000000..8076f3e
+--- /dev/null
++++ b/tools/osvtool/CameraPath.h
+@@ -0,0 +1,167 @@
++// SPDX-License-Identifier: Apache-2.0
++// Copyright 2026 The OpenOSV Contributors
++//
++// CameraPath.h - an animated reframe view for `osvtool render --path`.
++//
++// A camera path is the .path.json written by 360 Director: a list of
++// keyframes {t, yaw, pitch, roll, fov, ease} in seconds and degrees, sorted
++// by t.  Its conventions are the ones of ffmpeg's v360 filter, which the
++// editor's preview was checked against:
++//   yaw   positive turns the view to the right (unbounded: 720 = two turns),
++//   pitch positive looks up,
++//   roll  positive rotates the picture counter-clockwise,
++//   fov   the field of view across the frame's LONG side, in degrees.
++// The segment from key i to key i + 1 eases with key i + 1's `ease`:
++// "linear", or anything else as smoothstep.  evaluate() must stay identical
++// to evalPath() in 360-director.html and eval_path() in director-render.py.
++//
++// toView() converts a pose to OpenOSV's VirtualCamera, whose yaw turns the
++// other way (positive = left) and whose hfov is the horizontal one; both were
++// checked ray-for-ray against the editor's maths (max error 0.000000 deg).
++#pragma once
++
++#include "osv/geom/VirtualCamera.h"
++
++#include <nlohmann/json.hpp>
++
++#include <algorithm>
++#include <cmath>
++#include <fstream>
++#include <optional>
++#include <string>
++#include <vector>
++
++namespace osv::tool {
++
++struct CameraPose {
++    double yaw = 0.0, pitch = 0.0, roll = 0.0, fov = 100.0;
++};
++
++struct CameraKey {
++    double t = 0.0;
++    CameraPose pose;
++    bool linear = false;
++};
++
++class CameraPath {
++public:
++    std::vector<CameraKey> keys;
++    double rangeIn = 0.0;                 ///< Seconds; where the editor's range starts.
++    std::optional<double> rangeOut;       ///< Seconds; empty = to the end.
++    int width = 0, height = 0;            ///< The editor's frame size; 0 when the file has none.
++    std::optional<long long> sourceStartFrame;  ///< "source_start_frame": timeline frame of path time 0.
++
++    /// Read a .path.json.  Empty string on success, else what was wrong.
++    std::string load(const std::string& file) {
++        std::ifstream in(file);
++        if (!in) {
++            return "cannot open " + file;
++        }
++        nlohmann::json j;
++        try {
++            in >> j;
++        } catch (const std::exception& e) {
++            return file + " is not valid JSON (" + e.what() + ")";
++        }
++        if (!j.is_object() || !j.contains("keys") || !j["keys"].is_array()) {
++            return file + " is not a 360 Director path file (no \"keys\" list)";
++        }
++        keys.clear();
++        for (const auto& k : j["keys"]) {
++            if (!k.is_object() || !k.contains("t") || !k["t"].is_number()) {
++                return file + ": a keyframe has no numeric \"t\"";
++            }
++            CameraKey key;
++            key.t = k["t"].get<double>();
++            key.pose.yaw = num(k, "yaw", 0.0);
++            key.pose.pitch = num(k, "pitch", 0.0);
++            key.pose.roll = num(k, "roll", 0.0);
++            key.pose.fov = num(k, "fov", 100.0);
++            key.linear = k.contains("ease") && k["ease"].is_string() && k["ease"].get<std::string>() == "linear";
++            if (!std::isfinite(key.t) || !std::isfinite(key.pose.yaw) || !std::isfinite(key.pose.pitch) ||
++                !std::isfinite(key.pose.roll) || !std::isfinite(key.pose.fov)) {
++                return file + ": a keyframe holds a value that is not a finite number";
++            }
++            keys.push_back(key);
++        }
++        std::stable_sort(keys.begin(), keys.end(), [](const CameraKey& a, const CameraKey& b) { return a.t < b.t; });
++        if (j.contains("range") && j["range"].is_object()) {
++            const auto& r = j["range"];
++            if (r.contains("in") && r["in"].is_number()) {
++                rangeIn = std::max(0.0, r["in"].get<double>());
++            }
++            if (r.contains("out") && r["out"].is_number()) {
++                rangeOut = r["out"].get<double>();
++            }
++        }
++        if (j.contains("output") && j["output"].is_object()) {
++            const auto& o = j["output"];
++            if (o.contains("width") && o["width"].is_number_integer() && o.contains("height") &&
++                o["height"].is_number_integer()) {
++                width = o["width"].get<int>();
++                height = o["height"].get<int>();
++            }
++        }
++        if (j.contains("source_start_frame") && j["source_start_frame"].is_number_integer()) {
++            sourceStartFrame = j["source_start_frame"].get<long long>();
++        }
++        return {};
++    }
++
++    /// The pose at `t` seconds (path time).
++    [[nodiscard]] CameraPose evaluate(double t) const {
++        if (keys.empty()) {
++            return CameraPose{};
++        }
++        if (t <= keys.front().t) {
++            return keys.front().pose;
++        }
++        if (t >= keys.back().t) {
++            return keys.back().pose;
++        }
++        std::size_t lo = 0, hi = keys.size() - 1;
++        while (hi - lo > 1) {
++            const std::size_t mid = (lo + hi) >> 1;
++            if (keys[mid].t <= t) {
++                lo = mid;
++            } else {
++                hi = mid;
++            }
++        }
++        const CameraKey& a = keys[lo];
++        const CameraKey& b = keys[hi];
++        const double span = b.t - a.t;
++        double s = span > 0 ? (t - a.t) / span : 1.0;
++        if (!b.linear) {
++            s = s * s * (3 - 2 * s);
++        }
++        CameraPose p;
++        p.yaw = a.pose.yaw + (b.pose.yaw - a.pose.yaw) * s;
++        p.pitch = a.pose.pitch + (b.pose.pitch - a.pose.pitch) * s;
++        p.roll = a.pose.roll + (b.pose.roll - a.pose.roll) * s;
++        p.fov = a.pose.fov + (b.pose.fov - a.pose.fov) * s;
++        return p;
++    }
++
++    /// `base` (the camera --proj / --preset / --yaw ... built) moved to `pose`:
++    /// the path's angles are added to the base's, so --yaw / --pitch / --roll
++    /// still work as offsets, and the path's long-side fov becomes the
++    /// camera's horizontal one.
++    static geom::VirtualCamera toView(const geom::VirtualCamera& base, const CameraPose& pose) {
++        geom::VirtualCamera cam = base;
++        cam.yawDeg = base.yawDeg - pose.yaw;
++        cam.pitchDeg = base.pitchDeg + pose.pitch;
++        cam.rollDeg = base.rollDeg + pose.roll;
++        const double longSide = std::max(base.w, base.h);
++        const double t = std::tan(std::clamp(pose.fov, 1.0, 170.0) * 3.14159265358979323846 / 360.0);
++        cam.hfovDeg = 2.0 * std::atan(t * base.w / longSide) * 180.0 / 3.14159265358979323846;
++        return cam;
++    }
++
++private:
++    static double num(const nlohmann::json& k, const char* name, double fallback) {
++        return k.contains(name) && k[name].is_number() ? k[name].get<double>() : fallback;
++    }
++};
++
++}  // namespace osv::tool
+diff --git a/tools/osvtool/CmdRender.cpp b/tools/osvtool/CmdRender.cpp
+index a10676b..1f8909b 100644
+--- a/tools/osvtool/CmdRender.cpp
++++ b/tools/osvtool/CmdRender.cpp
+@@ -32,6 +32,7 @@
+ 
+ #include "Commands.h"
+ #include "Pipeline.h"
++#include "CameraPath.h"
+ 
+ // The plug-ins' clip engine and its (SDK-free) layer, compiled into osvtool
+ // by tools/osvtool/CMakeLists.txt with OSV_CLIP_ENGINE_WITHOUT_PREMIERE.
+@@ -123,6 +124,8 @@ struct RenderOptions {
+     double distortion = 0.0;      ///< Eye offset d for --proj eye-offset (0..1)
+     bool distortionSet = false;
+     double yaw = 0.0, pitch = 0.0, roll = 0.0, correction = 0.0;
++    std::string pathFile;          ///< --path: a 360 Director camera path (.path.json)
++    int pathStart = 0;             ///< --path-start: timeline frame where the path's time 0 sits
+     std::string size = "1920x1080";
+     bool seamSearch = false;
+     bool parallax = false;         ///< 2-D flow-based parallax correction
+@@ -1394,7 +1397,7 @@ constexpr const char* kClassicOnlyOptions[] = {
+ 
+ /// The plugin engine's own options, which the classic pipeline has no use for.
+ constexpr const char* kPluginOnlyOptions[] = {"--flare", "--parallax-grid", "--lens-align", "--lens-focal",
+-                                             "--purpose"};
++                                             "--purpose", "--path", "--path-start"};
+ 
+ /// The Source Settings a plugin-engine render uses: the built-in defaults of
+ /// a new clip - or, with --use-user-defaults, the ones saved in Premiere -
+@@ -1741,12 +1744,69 @@ int runEngineRender(const RenderOptions& o, const CLI::App& sub) {
+                   timelineFrames, clip->fps(), clip->frameCount(), clip->ownTimeline().heldFrames);
+     }
+ 
++    // ---- camera path (--path) ----------------------------------------------------------------------
++    // A 360 Director path animates the reframe view: every frame is rendered
++    // with the pose the path holds at that frame's time (CameraPath.h).
++    tool::CameraPath camPath;
++    const bool hasPath = !o.pathFile.empty();
++    // Seconds per timeline frame from the exact rational rate, as the audio uses.
++    const double secondsPerFrame = (clip->rateNumerator() > 0 && clip->rateDenominator() > 0)
++                                       ? static_cast<double>(clip->rateDenominator()) / clip->rateNumerator()
++                                       : (clip->fps() > 0 ? 1.0 / clip->fps() : 0.0);
++    if (hasPath) {
++        if (o.mode != "reframe") {
++            std::fprintf(stderr, "error: --path animates the reframe view; use it with --mode reframe\n");
++            return kExitUsage;
++        }
++        if (secondsPerFrame <= 0.0) {
++            std::fprintf(stderr, "error: --path needs the clip's frame rate, and this clip has none\n");
++            return kExitInput;
++        }
++        if (const std::string err = camPath.load(o.pathFile); !err.empty()) {
++            std::fprintf(stderr, "error: --path: %s\n", log::safe(err).c_str());
++            return kExitInput;
++        }
++        if (camPath.keys.empty()) {
++            log::warn("camera path {} has no keyframes; every frame uses the default view", o.pathFile);
++        }
++    }
++    // Path time 0: --path-start, else the frame the path file records, else 0.
++    const long long pathStart = sub.count("--path-start") > 0 ? static_cast<long long>(o.pathStart) : camPath.sourceStartFrame.value_or(0);
++    if (hasPath && pathStart < 0) {
++        std::fprintf(stderr, "error: --path-start must be a timeline frame (0 or more)\n");
++        return kExitUsage;
++    }
++
+     // ---- frames -----------------------------------------------------------------------------------
+     std::uint32_t first = 0, last = 0;
+-    if (const int selected = selectFrames(o, timelineFrames, first, last); selected != kExitOk) {
++    const bool framesGiven = sub.count("--frame") > 0 || sub.count("--range") > 0 || sub.count("--all") > 0;
++    if (hasPath && !framesGiven) {
++        // The path's own start / end (360 Director's Set start / Set end),
++        // in seconds of path time; path time 0 is timeline frame --path-start.
++        const double inFrame = static_cast<double>(pathStart) + camPath.rangeIn / secondsPerFrame;
++        const double firstD = std::ceil(inFrame - 1e-6);
++        double lastD = static_cast<double>(timelineFrames) - 1.0;
++        if (camPath.rangeOut) {
++            lastD = std::min(lastD, std::ceil(static_cast<double>(pathStart) + *camPath.rangeOut / secondsPerFrame - 1e-6) - 1.0);
++        }
++        if (firstD < 0.0 || firstD > lastD) {
++            std::fprintf(stderr,
++                         "error: the path's range (%.2f s to %s) holds no frame of this clip; check --path-start "
++                         "or give --range\n",
++                         camPath.rangeIn, camPath.rangeOut ? std::to_string(*camPath.rangeOut).c_str() : "end");
++            return kExitUsage;
++        }
++        first = static_cast<std::uint32_t>(firstD);
++        last = static_cast<std::uint32_t>(lastD);
++    } else if (const int selected = selectFrames(o, timelineFrames, first, last); selected != kExitOk) {
+         return selected;
+     }
+     const bool multi = last > first;
++    if (hasPath) {
++        log::info("camera path: {} keyframes from {}; frames {}-{} (path time {:.2f}-{:.2f} s, time 0 = frame {})",
++                  camPath.keys.size(), o.pathFile, first, last, (first - static_cast<double>(pathStart)) * secondsPerFrame,
++                  (last - static_cast<double>(pathStart)) * secondsPerFrame, pathStart);
++    }
+ 
+     // ---- output geometry ------------------------------------------------------------------------
+     // An equirect without --size is the Source Settings Output Size (Native,
+@@ -1756,7 +1816,11 @@ int runEngineRender(const RenderOptions& o, const CLI::App& sub) {
+         geometry = clip->geometryFor(settings);
+     } else {
+         int w = 0, h = 0;
+-        if (!parseSize(o.size, w, h)) {
++        if (hasPath && sub.count("--size") == 0 && camPath.width > 0 && camPath.height > 0) {
++            // The frame shape the path was directed in (360 Director's Frame).
++            w = camPath.width;
++            h = camPath.height;
++        } else if (!parseSize(o.size, w, h)) {
+             std::fprintf(stderr, "error: --size must be WxH\n");
+             return kExitUsage;
+         }
+@@ -1774,6 +1838,8 @@ int runEngineRender(const RenderOptions& o, const CLI::App& sub) {
+         std::fprintf(stderr, "error: no usable output size for this clip\n");
+         return kExitUsage;
+     }
++    // The camera --proj / --preset / --yaw ... built: a path moves it frame by frame.
++    const std::optional<geom::VirtualCamera> baseView = geometry.view;
+ 
+     // ---- output sink ------------------------------------------------------------------------------
+     const OsvColorParams frameColor = clip->colorParams();
+@@ -1818,6 +1884,10 @@ int runEngineRender(const RenderOptions& o, const CLI::App& sub) {
+         // constant-rate clip).  A held frame asks for the sample it repeats,
+         // which the engine's last-frame cache serves without a decode.
+         const std::uint32_t sample = clip->ownSourceFrameFor(f);
++        if (hasPath && baseView) {
++            const double t = (static_cast<double>(f) - static_cast<double>(pathStart)) * secondsPerFrame;
++            geometry.view = tool::CameraPath::toView(*baseView, camPath.evaluate(t));
++        }
+         std::lock_guard<std::mutex> lock(clip->lock());
+         if (fresh) {
+             clip->dropRenderedFrame();
+@@ -2000,6 +2070,14 @@ void registerRenderCommand(CLI::App& app, CommandContext& ctx) {
+     outGeom->add_option("--pitch", opt->pitch, "Tilt angle (deg)")->default_val(0.0);
+     outGeom->add_option("--roll", opt->roll, "Roll angle (deg)")->default_val(0.0);
+     outGeom->add_option("--correction", opt->correction, "Correction (horizon) angle (deg)")->default_val(0.0);
++    outGeom->add_option("--path", opt->pathFile,
++                        "Camera path from 360 Director (.path.json): the reframe view follows its keyframes. "
++                        "Without --size / --range it also sets the frame size and the frames rendered; "
++                        "--yaw / --pitch / --roll add to it");
++    outGeom->add_option("--path-start", opt->pathStart,
++                        "Timeline frame where the path's time 0 sits: the first frame of the 360 render you "
++                        "directed on (its --range start). Default: the path file's source_start_frame, else 0")
++        ->default_val(0);
+     outGeom->add_option("--size", opt->size, "Output size WxH")->default_str("1920x1080");
+     // The --no-* spellings exist for --use-user-defaults: they switch a saved
+     // default off for one render.  Without that flag they change nothing.

@@ -1,0 +1,32 @@
+From ce270d68d89fd2dbc6dece65956e9dfc37569f6c Mon Sep 17 00:00:00 2001
+From: Andrew Chadick <andrew@localhost>
+Date: Mon, 12 Oct 2026 22:21:13 +0000
+Subject: [PATCH 4/7] Avata 360: half turn about the levelled forward axis so
+ lens-up/down rigs render upright
+
+---
+ src/osv/geom/Stabilization.cpp | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/src/osv/geom/Stabilization.cpp b/src/osv/geom/Stabilization.cpp
+index 3bf2fd4..16dd11b 100644
+--- a/src/osv/geom/Stabilization.cpp
++++ b/src/osv/geom/Stabilization.cpp
+@@ -212,7 +212,16 @@ Mat3d stabilizationBodyFromWorld(const Quatd& worldFromBody, const Stabilization
+         // Current (mounted) body orientation expressed in the same levelled basis.
+         const Mat3d rLevelledFromMounted = basis.transposed() * rWm;
+         // body <- mounted <- levelled <- view.
+-        return mount * (rLevelledFromMounted.transposed() * rLevelledFromView);
++        const Mat3d bodyFromView = mount * (rLevelledFromMounted.transposed() * rLevelledFromView);
++        // A lens-up / lens-down rig (the Avata 360) comes out of the levelling
++        // upside down: on Avata 360 firmware 01.00.05.00 footage the levelled
++        // view needed a half turn about its forward axis (+Y), the same as
++        // --roll 180, in both reframed and equirect output.  The Osmo 360's
++        // identity mount never takes this branch.
++        if (mount.distance(Mat3d::identity()) > 0.0) {
++            return bodyFromView * Mat3d::fromColumns(Vec3d{-1.0, 0.0, 0.0}, Vec3d{0.0, 1.0, 0.0}, Vec3d{0.0, 0.0, -1.0});
++        }
++        return bodyFromView;
+     }
+     }
+     return Mat3d::identity();

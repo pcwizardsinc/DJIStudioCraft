@@ -1,0 +1,935 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>360 Director</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink: #0E1A24;      /* dusk sky, the room around the picture */
+  --panel: #15242F;
+  --raise: #1C3040;
+  --line: #2A4254;
+  --text: #DCE7EE;
+  --muted: #8FA6B6;
+  --sun: #F2B544;      /* keyframes, playhead: things you placed */
+  --rec: #E5484D;      /* recording */
+  --sky: #6CC3F0;      /* where the camera is looking */
+  --font: "Barlow", system-ui, "Cantarell", "Noto Sans", sans-serif;
+  --cond: "Barlow Semi Condensed", "Barlow", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--ink); color: var(--text); font: 15px/1.45 var(--font);
+  display: grid; grid-template-rows: auto 1fr auto auto; height: 100vh; overflow: hidden;
+}
+button, select, input { font: inherit; color: inherit; }
+button {
+  background: var(--raise); border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 12px; cursor: pointer; white-space: nowrap;
+}
+button:hover:not(:disabled) { border-color: var(--muted); }
+button:disabled { opacity: .45; cursor: default; }
+button:focus-visible, select:focus-visible, input:focus-visible, canvas:focus-visible {
+  outline: 2px solid var(--sky); outline-offset: 2px;
+}
+select, input[type=number], input[type=text] {
+  background: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px;
+}
+input[type=number] { width: 4.6em; }
+input[type=range] { accent-color: var(--sky); width: 100%; }
+
+/* header */
+header {
+  display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+  border-bottom: 1px solid var(--line); background: var(--panel);
+}
+header h1 { font: 600 19px/1 var(--cond); margin: 0 10px 0 0; letter-spacing: .01em; }
+header h1 span { color: var(--sun); }
+#fileName { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.primary { background: var(--sun); color: #1b1306; border-color: var(--sun); font-weight: 600; }
+.primary:hover:not(:disabled) { border-color: #fff3; filter: brightness(1.06); }
+
+/* main */
+main { display: grid; grid-template-columns: 1fr 320px; min-height: 0; }
+#stageWrap { position: relative; display: grid; place-items: center; padding: 14px; min-height: 0; }
+#stage { position: relative; background: #000; box-shadow: 0 0 0 1px var(--line); touch-action: none; }
+#view { display: block; width: 100%; height: 100%; cursor: grab; }
+#view.grabbing { cursor: grabbing; }
+#compass { position: absolute; left: 0; right: 0; top: 0; height: 30px; width: 100%; pointer-events: none; }
+#status {
+  position: absolute; left: 12px; bottom: 12px; padding: 4px 10px; border-radius: 999px;
+  background: #0E1A24cc; border: 1px solid var(--line); font-size: 13px; display: flex; gap: 8px; align-items: center;
+}
+#status button { padding: 1px 8px; font-size: 12px; }
+#status.rec { border-color: var(--rec); color: #ffd9da; }
+#status.rec::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--rec); animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { #status.rec::before { animation: none; } }
+#empty {
+  position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 12px; padding: 24px;
+  background: radial-gradient(ellipse at 50% 120%, #22445a 0%, var(--ink) 60%);
+}
+#empty p { margin: 0; color: var(--muted); max-width: 44ch; }
+#empty strong { font: 600 22px/1.2 var(--cond); color: var(--text); }
+code { font-family: ui-monospace, "DejaVu Sans Mono", monospace; font-size: .9em; color: var(--text); }
+
+/* sidebar */
+aside { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding: 14px 16px 24px; }
+aside h2 { font: 600 15px/1.2 var(--cond); margin: 18px 0 8px; color: var(--text); }
+aside h2:first-child { margin-top: 0; }
+.hint { color: var(--muted); font-size: 13px; margin: 4px 0 0; }
+#map { width: 100%; aspect-ratio: 2 / 1; display: block; border-radius: 4px; background: #000; cursor: crosshair; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.row + .row { margin-top: 8px; }
+.row label { color: var(--muted); font-size: 13px; }
+.moves { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.moves button { padding: 9px 8px; text-align: left; }
+.moves button small { display: block; color: var(--muted); font-size: 12px; }
+#keyList { list-style: none; margin: 0; padding: 0; font-variant-numeric: tabular-nums; font-size: 13px; }
+#keyList li {
+  display: grid; grid-template-columns: 4.8em 1fr auto; gap: 6px; align-items: center;
+  padding: 4px 6px; border-radius: 4px; cursor: pointer;
+}
+#keyList li:hover { background: var(--raise); }
+#keyList li.sel { background: #F2B54422; box-shadow: inset 2px 0 0 var(--sun); }
+#keyList li .t { color: var(--sun); }
+#keyList li .v { color: var(--muted); }
+#keyList li button { padding: 0 6px; font-size: 12px; background: none; border-color: transparent; color: var(--muted); }
+#keyList li button:hover { color: var(--rec); }
+
+/* transport + timeline */
+#transport {
+  display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-top: 1px solid var(--line);
+  background: var(--panel); flex-wrap: wrap;
+}
+#time { font: 500 16px/1 var(--cond); font-variant-numeric: tabular-nums; min-width: 11em; }
+#readout { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; margin-left: auto; }
+#recBtn.on { background: var(--rec); border-color: var(--rec); color: #fff; }
+#timelineWrap { padding: 0 16px 12px; background: var(--panel); }
+#timeline { display: block; width: 100%; height: 56px; cursor: pointer; }
+
+dialog {
+  background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px;
+  width: min(640px, 94vw); padding: 20px 22px;
+}
+dialog::backdrop { background: #0008; }
+dialog h2 { font: 600 20px/1.2 var(--cond); margin: 0 0 4px; }
+dialog .grid { display: grid; grid-template-columns: 9em 1fr; gap: 10px 12px; align-items: center; margin: 16px 0; }
+dialog .grid label { color: var(--muted); }
+dialog input[type=text] { width: 100%; }
+dialog pre {
+  background: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px;
+  white-space: pre-wrap; word-break: break-all; margin: 8px 0;
+}
+dialog ol { padding-left: 1.3em; margin: 8px 0; color: var(--muted); }
+dialog ol li { margin: 4px 0; }
+.actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; flex-wrap: wrap; }
+#toast {
+  position: fixed; left: 50%; bottom: 120px; transform: translateX(-50%); background: var(--raise);
+  border: 1px solid var(--line); padding: 8px 14px; border-radius: 8px; opacity: 0; pointer-events: none;
+  transition: opacity .2s; z-index: 10;
+}
+#toast.show { opacity: 1; }
+@media (max-width: 900px) {
+  body { overflow: auto; height: auto; }
+  main { grid-template-columns: 1fr; }
+  #stageWrap { min-height: 56vw; }
+  aside { border-left: 0; border-top: 1px solid var(--line); }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>360 <span>Director</span></h1>
+  <button id="openBtn">Open video</button>
+  <button id="openPathBtn" disabled>Open path</button>
+  <span id="fileName">No video open</span>
+  <button id="undoBtn" disabled title="Undo (Ctrl+Z)">Undo</button>
+  <button id="saveBtn" disabled>Save path</button>
+  <button id="exportBtn" class="primary" disabled>Render video</button>
+  <input type="file" id="fileIn" accept="video/*" hidden>
+  <input type="file" id="pathIn" accept=".json,application/json" hidden>
+</header>
+
+<main>
+  <div id="stageWrap">
+    <div id="stage">
+      <canvas id="view" tabindex="0" aria-label="360 view. Drag to look around, scroll to zoom."></canvas>
+      <canvas id="compass" aria-hidden="true"></canvas>
+      <div id="status" hidden></div>
+      <div id="empty">
+        <strong>Open a 360 video to start directing</strong>
+        <p>Use the preview copy made by <code>director-proxy</code> from your 360 render. You can also drop the file here.</p>
+        <div><button class="primary" id="emptyOpen">Open video</button></div>
+      </div>
+    </div>
+  </div>
+
+  <aside>
+    <h2>Where you're looking</h2>
+    <canvas id="map" aria-label="Whole-sphere map. Click to look at a spot."></canvas>
+    <p class="hint">The outline is your frame. Dots trace the camera path. Click anywhere to look there.</p>
+
+    <h2>Frame</h2>
+    <div class="row">
+      <label for="frameSel">Shape</label>
+      <select id="frameSel">
+        <option value="1920x1080">16:9 HD (1920×1080)</option>
+        <option value="3840x2160">16:9 4K (3840×2160)</option>
+        <option value="1080x1920">9:16 vertical (1080×1920)</option>
+        <option value="1080x1080">1:1 square (1080×1080)</option>
+      </select>
+    </div>
+    <div class="row">
+      <label for="fovIn" style="min-width:5.5em">Zoom (FOV)</label>
+      <input type="range" id="fovIn" min="30" max="140" step="1" value="100" style="flex:1">
+      <span id="fovVal" style="width:3em;text-align:right">100°</span>
+    </div>
+
+    <h2>Moves</h2>
+    <div class="moves">
+      <button data-move="behind">Look behind<small>Turn around, then back</small></button>
+      <button data-move="spin">Full 360 spin<small>One smooth turn</small></button>
+      <button data-move="up">Look up<small>Tilt to the sky</small></button>
+      <button data-move="down">Look down<small>Tilt to the ground</small></button>
+      <button data-move="ahead" style="grid-column: span 2">Resume forward<small>Glide back to the level view straight ahead</small></button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label for="turnIn">Turn</label><input type="number" id="turnIn" min="0.3" max="20" step="0.1" value="1.5"><label>s</label>
+      <label for="holdIn">Hold</label><input type="number" id="holdIn" min="0" max="30" step="0.1" value="2"><label>s</label>
+    </div>
+    <div class="row">
+      <label for="spinIn">Spin</label><input type="number" id="spinIn" min="1" max="60" step="0.5" value="6"><label>s</label>
+      <select id="spinDir" aria-label="Spin direction"><option value="1">to the right</option><option value="-1">to the left</option></select>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="returnIn" checked> Come back to the starting view</label>
+    </div>
+    <p class="hint">Moves start at the playhead, from whatever you're looking at.</p>
+
+    <h2>Record your moves</h2>
+    <div class="row">
+      <label for="smoothSel">Steadying</label>
+      <select id="smoothSel">
+        <option value="0">Off, exactly as dragged</option>
+        <option value="0.2" selected>Light</option>
+        <option value="0.5">Strong</option>
+      </select>
+      <label for="rateSel">Speed</label>
+      <select id="rateSel"><option value="0.5">½×</option><option value="1" selected>1×</option></select>
+    </div>
+    <p class="hint">Press <b>Record</b> (R), then drag while it plays. Whatever you look at is what the video shows. Recording replaces earlier moves in that stretch.</p>
+
+    <h2>Keyframes <span id="keyCount" class="hint" style="font-family:var(--font)"></span></h2>
+    <ul id="keyList"></ul>
+    <p class="hint" id="keyHint">Press K to keyframe the current view at the playhead.</p>
+  </aside>
+</main>
+
+<div id="transport">
+  <button id="playBtn" disabled aria-label="Play">Play</button>
+  <button id="recBtn" disabled>Record</button>
+  <button id="keyBtn" disabled>Add keyframe</button>
+  <span id="time">0:00.00 / 0:00.00</span>
+  <button id="inBtn" disabled title="Set start (I)">Set start</button>
+  <button id="outBtn" disabled title="Set end (O)">Set end</button>
+  <span id="readout"></span>
+</div>
+<div id="timelineWrap"><canvas id="timeline" tabindex="0" aria-label="Timeline. Click to move the playhead; drag a keyframe to move it."></canvas></div>
+
+<dialog id="exportDlg">
+  <h2>Render the final video</h2>
+  <p class="hint">The browser previews a light copy. The render follows the same moves at full quality.</p>
+  <div class="grid">
+    <label for="osvIn">Original .OSV</label><input type="text" id="osvIn" spellcheck="false" placeholder="DJI_20260815142440_0001_D.OSV">
+    <label for="startIn">360 render began at</label>
+    <span class="row"><input type="number" id="startIn" min="0" step="1" value="0"><span class="hint">frame: the --range start you used, or 0 for the whole clip</span></span>
+    <label for="masterIn">360 master</label><input type="text" id="masterIn" spellcheck="false">
+    <label for="outIn">Output file</label><input type="text" id="outIn" spellcheck="false">
+    <label for="sizeOut">Size</label><span id="sizeOut"></span>
+    <label for="crfIn">Quality</label>
+    <span class="row"><input type="number" id="crfIn" min="12" max="32" value="20"><span class="hint">lower is better; 18–22 is typical</span></span>
+    <label for="codecSel">Format</label>
+    <select id="codecSel"><option value="libx265">H.265 / HEVC (smaller files)</option><option value="libx264">H.264 (plays everywhere)</option></select>
+    <label>Range</label><span id="rangeOut"></span>
+  </div>
+  <ol>
+    <li>Save the path file. Your browser puts it in your downloads folder.</li>
+    <li>In a terminal, go to the folder that holds your footage and run one of these. Change the path if your browser saves downloads somewhere else.</li>
+  </ol>
+  <p class="hint" style="margin-bottom:0"><b>From the original .OSV</b>: one pass with OpenOSV, rendering only the frame you see.</p>
+  <pre id="osvCmdOut"></pre>
+  <p class="hint" style="margin-bottom:0"><b>From the 360 master</b>: faster, if you already have the full 360 render.</p>
+  <pre id="cmdOut"></pre>
+  <div class="actions">
+    <button id="copyOsvBtn">Copy OSV command</button>
+    <button id="copyBtn">Copy master command</button>
+    <button id="dlBtn" class="primary">Save path file</button>
+    <button id="closeDlg">Close</button>
+  </div>
+</dialog>
+<div id="toast" role="status" aria-live="polite"></div>
+<video id="video" playsinline preload="auto" hidden></video>
+
+<script>
+// ---- camera path core (shared logic; mirrored exactly in director-render.py) ----
+// A path is a list of keyframes {t, yaw, pitch, roll, fov, ease}, sorted by t.
+// yaw is unbounded (720 = two full turns right) so spins interpolate correctly.
+// The segment from key i to key i+1 uses key i+1's ease: "smooth" (smoothstep) or "linear".
+const DEFAULT_POSE = { yaw: 0, pitch: 0, roll: 0, fov: 100 };
+function evalPath(keys, t) {
+  if (!keys.length) return { ...DEFAULT_POSE };
+  if (t <= keys[0].t) return pick(keys[0]);
+  const last = keys[keys.length - 1];
+  if (t >= last.t) return pick(last);
+  let lo = 0, hi = keys.length - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (keys[mid].t <= t) lo = mid; else hi = mid; }
+  const a = keys[lo], b = keys[hi];
+  const span = b.t - a.t;
+  let s = span > 0 ? (t - a.t) / span : 1;
+  if (b.ease !== "linear") s = s * s * (3 - 2 * s);
+  return {
+    yaw: a.yaw + (b.yaw - a.yaw) * s,
+    pitch: a.pitch + (b.pitch - a.pitch) * s,
+    roll: a.roll + (b.roll - a.roll) * s,
+    fov: a.fov + (b.fov - a.fov) * s,
+  };
+}
+function pick(k) { return { yaw: k.yaw, pitch: k.pitch, roll: k.roll, fov: k.fov }; }
+// ---- end camera path core ----
+
+
+(() => {
+"use strict";
+const $ = (id) => document.getElementById(id);
+const video = $("video"), view = $("view"), stage = $("stage"), stageWrap = $("stageWrap");
+const compass = $("compass"), mapC = $("map"), tl = $("timeline");
+const D2R = Math.PI / 180;
+
+// ---------- state ----------
+let keys = [];
+let pose = { ...DEFAULT_POSE };
+let adjusted = false;          // user has looked away from the path
+let selKey = -1;
+let range = { in: 0, out: null };
+let out = { width: 1920, height: 1080 };
+let proxyName = "", master = "", outFile = "", crf = 20, codec = "libx265", osvName = "", sourceStart = 0;
+const undo = [];
+const rec = { active: false, start: 0, samples: [] };
+
+// ---------- WebGL viewer ----------
+const gl = view.getContext("webgl2", { antialias: false }) || view.getContext("webgl", { antialias: false });
+const isGL2 = typeof WebGL2RenderingContext !== "undefined" && gl instanceof WebGL2RenderingContext;
+const VS = `attribute vec2 p; varying vec2 v; void main(){ v = p * 0.5 + 0.5; gl_Position = vec4(p, 0.0, 1.0); }`;
+const FS = `precision highp float;
+varying vec2 v; uniform sampler2D tex; uniform float yaw, pitch, roll, th, tv;
+void main(){
+  float sx = (2.0 * v.x - 1.0) * th;
+  float sy = (2.0 * v.y - 1.0) * tv;
+  float cr = cos(roll), sr = sin(roll);
+  vec3 d = normalize(vec3(sx * cr + sy * sr, -sx * sr + sy * cr, 1.0));
+  float cp = cos(pitch), sp = sin(pitch);
+  float y2 = d.y * cp + d.z * sp, z2 = -d.y * sp + d.z * cp;
+  float cy = cos(yaw), syw = sin(yaw);
+  float x3 = d.x * cy + z2 * syw, z3 = -d.x * syw + z2 * cy;
+  float lon = atan(x3, z3), lat = asin(clamp(y2, -1.0, 1.0));
+  vec2 uv = vec2(lon / 6.28318531 + 0.5, 0.5 - lat / 3.14159265);
+  ${isGL2 ? "" : "uv.x = fract(uv.x);"}
+  gl_FragColor = texture2D(tex, uv);
+}`;
+function shader(type, src) {
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));
+gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(prog); gl.useProgram(prog);
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+const loc = gl.getAttribLocation(prog, "p");
+gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+const U = {}; for (const n of ["yaw", "pitch", "roll", "th", "tv"]) U[n] = gl.getUniformLocation(prog, n);
+const texObj = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, texObj);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, isGL2 ? gl.REPEAT : gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, 1, 1, 0, gl.RGB, gl.UNSIGNED_BYTE, new Uint8Array([20, 30, 40]));
+
+// zoom (fov) is the field of view across the frame's long side, so 16:9 and 9:16 look alike
+function tans(p) {
+  const t = Math.tan(Math.min(Math.max(p.fov, 1), 170) * D2R / 2), long = Math.max(out.width, out.height);
+  return [t * out.width / long, t * out.height / long];
+}
+function drawView() {
+  if (video.readyState >= 2) {
+    try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, video); } catch (e) { /* not ready */ }
+  }
+  gl.viewport(0, 0, view.width, view.height);
+  const [th, tv] = tans(pose);
+  gl.uniform1f(U.yaw, pose.yaw * D2R); gl.uniform1f(U.pitch, pose.pitch * D2R);
+  gl.uniform1f(U.roll, pose.roll * D2R); gl.uniform1f(U.th, th); gl.uniform1f(U.tv, tv);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+// screen point (sx, sy in -1..1) -> [lon, lat] in degrees, same maths as the shader
+function screenToLonLat(p, sx, sy) {
+  const [th, tv] = tans(p);
+  const r = p.roll * D2R, pi = p.pitch * D2R, y = p.yaw * D2R;
+  const ax = sx * th, ay = sy * tv;
+  let dx = ax * Math.cos(r) + ay * Math.sin(r), dy = -ax * Math.sin(r) + ay * Math.cos(r), dz = 1;
+  const n = Math.hypot(dx, dy, dz); dx /= n; dy /= n; dz /= n;
+  const y2 = dy * Math.cos(pi) + dz * Math.sin(pi), z2 = -dy * Math.sin(pi) + dz * Math.cos(pi);
+  const x3 = dx * Math.cos(y) + z2 * Math.sin(y), z3 = -dx * Math.sin(y) + z2 * Math.cos(y);
+  return [Math.atan2(x3, z3) / D2R, Math.asin(Math.max(-1, Math.min(1, y2))) / D2R];
+}
+
+// ---------- layout ----------
+function layout() {
+  const box = stageWrap.getBoundingClientRect();
+  const aw = box.width - 28, ah = box.height - 28, ar = out.width / out.height;
+  let w = aw, h = aw / ar;
+  if (h > ah) { h = ah; w = ah * ar; }
+  w = Math.max(160, Math.floor(w)); h = Math.max(90, Math.floor(h));
+  stage.style.width = w + "px"; stage.style.height = h + "px";
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  view.width = Math.min(out.width, Math.round(w * dpr)); view.height = Math.round(view.width / ar);
+  compass.width = Math.round(w * dpr); compass.height = Math.round(30 * dpr);
+  for (const c of [mapC, tl]) { const r = c.getBoundingClientRect(); c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr); }
+}
+new ResizeObserver(layout).observe(stageWrap);
+window.addEventListener("resize", layout);
+
+// ---------- compass (heading tape) ----------
+const HEAD = { 0: "Ahead", 90: "Right", 180: "Behind", 270: "Left" };
+function drawCompass() {
+  const c = compass.getContext("2d"), W = compass.width, H = compass.height, s = H / 30;
+  c.clearRect(0, 0, W, H);
+  const g = c.createLinearGradient(0, 0, 0, H); g.addColorStop(0, "#0E1A24d9"); g.addColorStop(1, "#0E1A2400");
+  c.fillStyle = g; c.fillRect(0, 0, W, H);
+  const span = 2 * Math.atan(tans(pose)[0]) / D2R, pxPerDeg = W / span, yawW = ((pose.yaw % 360) + 360) % 360;
+  c.font = `${600} ${12 * s}px ${getComputedStyle(document.body).getPropertyValue("--cond")}`;
+  c.textAlign = "center"; c.textBaseline = "top";
+  const start = Math.floor((yawW - span / 2) / 5) * 5;
+  for (let d = start; d <= yawW + span / 2; d += 5) {
+    const x = W / 2 + (d - yawW) * pxPerDeg, dd = ((d % 360) + 360) % 360;
+    const major = dd % 45 === 0;
+    c.strokeStyle = major ? "#DCE7EE" : "#8FA6B680"; c.lineWidth = s;
+    c.beginPath(); c.moveTo(x, 0); c.lineTo(x, (major ? 8 : 4) * s); c.stroke();
+    if (major) { c.fillStyle = HEAD[dd] ? "#DCE7EE" : "#8FA6B6"; c.fillText(HEAD[dd] || dd + "°", x, 10 * s); }
+  }
+  c.fillStyle = "#F2B544"; c.beginPath(); c.moveTo(W / 2 - 5 * s, 0); c.lineTo(W / 2 + 5 * s, 0); c.lineTo(W / 2, 6 * s); c.fill();
+}
+
+// ---------- sphere map ----------
+let pathTrail = null;
+function buildTrail() {
+  const dur = video.duration || 0;
+  pathTrail = [];
+  if (!keys.length || !dur) return;
+  for (let i = 0; i <= 300; i++) { const p = evalPath(keys, dur * i / 300); pathTrail.push([wrap180(p.yaw), p.pitch]); }
+}
+function wrap180(a) { return ((a + 180) % 360 + 360) % 360 - 180; }
+function drawMap() {
+  const c = mapC.getContext("2d"), W = mapC.width, H = mapC.height;
+  if (video.readyState >= 2) c.drawImage(video, 0, 0, W, H); else { c.fillStyle = "#000"; c.fillRect(0, 0, W, H); }
+  c.fillStyle = "#0E1A2455"; c.fillRect(0, 0, W, H);
+  const X = (lon) => (lon / 360 + 0.5) * W, Y = (lat) => (0.5 - lat / 180) * H;
+  c.strokeStyle = "#ffffff30"; c.lineWidth = 1; c.beginPath();
+  for (const lon of [-90, 0, 90]) { c.moveTo(X(lon), 0); c.lineTo(X(lon), H); }
+  c.moveTo(0, Y(0)); c.lineTo(W, Y(0)); c.stroke();
+  if (pathTrail) {
+    c.fillStyle = "#F2B544aa";
+    for (const [lo, la] of pathTrail) { c.beginPath(); c.arc(X(lo), Y(la), Math.max(1.2, W / 260), 0, 7); c.fill(); }
+  }
+  // frame outline
+  const pts = [], N = 24;
+  for (let i = 0; i < N; i++) pts.push([-1 + 2 * i / N, 1]);
+  for (let i = 0; i < N; i++) pts.push([1, 1 - 2 * i / N]);
+  for (let i = 0; i < N; i++) pts.push([1 - 2 * i / N, -1]);
+  for (let i = 0; i < N; i++) pts.push([-1, -1 + 2 * i / N]);
+  c.strokeStyle = "#6CC3F0"; c.lineWidth = Math.max(1.5, W / 220); c.beginPath();
+  let prev = null;
+  for (const [sx, sy] of [...pts, pts[0]]) {
+    const [lo, la] = screenToLonLat(pose, sx, sy), x = X(lo), y = Y(la);
+    if (prev && Math.abs(x - prev) < W / 2) c.lineTo(x, y); else c.moveTo(x, y);
+    prev = x;
+  }
+  c.stroke();
+  const [clo, cla] = screenToLonLat(pose, 0, 0);
+  c.fillStyle = "#6CC3F0"; c.beginPath(); c.arc(X(clo), Y(cla), Math.max(2.5, W / 120), 0, 7); c.fill();
+}
+mapC.addEventListener("click", (e) => {
+  if (!video.duration) return;
+  const r = mapC.getBoundingClientRect();
+  const lon = ((e.clientX - r.left) / r.width - 0.5) * 360, lat = (0.5 - (e.clientY - r.top) / r.height) * 180;
+  const cur = pose.yaw; let y = lon + Math.round((cur - lon) / 360) * 360;
+  pose = { ...pose, yaw: y, pitch: Math.max(-89, Math.min(89, lat)) };
+  if (!rec.active) adjusted = true;
+});
+
+// ---------- timeline ----------
+const TL = { drag: null };
+function tX(t) { return (t / (video.duration || 1)) * tl.width; }
+function xT(x) { return Math.max(0, Math.min(video.duration || 0, (x / tl.width) * (video.duration || 0))); }
+function drawTimeline() {
+  const c = tl.getContext("2d"), W = tl.width, H = tl.height, s = H / 56, dur = video.duration || 0;
+  c.clearRect(0, 0, W, H);
+  c.fillStyle = "#0E1A24"; c.fillRect(0, 10 * s, W, H - 10 * s);
+  if (!dur) return;
+  const rin = range.in, rout = range.out ?? dur;
+  c.fillStyle = "#6CC3F01c"; c.fillRect(tX(rin), 10 * s, tX(rout) - tX(rin), H - 10 * s);
+  c.fillStyle = "#6CC3F0"; c.fillRect(tX(rin), 10 * s, 2 * s, H - 10 * s); c.fillRect(tX(rout) - 2 * s, 10 * s, 2 * s, H - 10 * s);
+  // ticks
+  const step = [1, 2, 5, 10, 15, 30, 60, 120, 300].find((v) => dur / v < 14) || 600;
+  c.fillStyle = "#8FA6B6"; c.font = `${11 * s}px ${getComputedStyle(document.body).getPropertyValue("--font")}`; c.textBaseline = "top";
+  for (let t = 0; t <= dur; t += step) { c.fillRect(tX(t), 10 * s, 1, 5 * s); c.fillText(fmt(t, false), tX(t) + 3 * s, 0); }
+  // segments: recorded (linear) stretches as a band
+  for (let i = 1; i < keys.length; i++) {
+    if (keys[i].ease === "linear") { c.fillStyle = "#E5484D55"; c.fillRect(tX(keys[i - 1].t), 40 * s, tX(keys[i].t) - tX(keys[i - 1].t), 8 * s); }
+  }
+  // keyframes (skip dense recorded keys except at edges)
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i];
+    const dense = k.ease === "linear" && keys[i + 1] && keys[i + 1].ease === "linear";
+    if (dense && i !== selKey) continue;
+    const x = tX(k.t), y = 28 * s, r = (i === selKey ? 7 : 5) * s;
+    c.fillStyle = "#F2B544"; c.beginPath(); c.moveTo(x, y - r); c.lineTo(x + r, y); c.lineTo(x, y + r); c.lineTo(x - r, y); c.fill();
+    if (i === selKey) { c.strokeStyle = "#fff"; c.lineWidth = 1.5 * s; c.stroke(); }
+  }
+  if (rec.active) { c.fillStyle = "#E5484D88"; c.fillRect(tX(rec.start), 40 * s, tX(video.currentTime) - tX(rec.start), 8 * s); }
+  const px = tX(video.currentTime);
+  c.fillStyle = "#DCE7EE"; c.fillRect(px - s, 10 * s, 2 * s, H - 10 * s);
+}
+function keyAt(x) {
+  const tol = 7 * (tl.width / tl.getBoundingClientRect().width);
+  let best = -1, bd = tol;
+  keys.forEach((k, i) => {
+    const dense = k.ease === "linear" && keys[i + 1] && keys[i + 1].ease === "linear";
+    if (dense) return;
+    const d = Math.abs(tX(k.t) - x); if (d < bd) { bd = d; best = i; }
+  });
+  return best;
+}
+tl.addEventListener("pointerdown", (e) => {
+  if (!video.duration) return;
+  tl.setPointerCapture(e.pointerId);
+  const x = (e.offsetX / tl.getBoundingClientRect().width) * tl.width;
+  const k = keyAt(x);
+  if (k >= 0) { selKey = k; snapshot(); TL.drag = { key: keys[k] }; seek(keys[k].t); }
+  else { TL.drag = { seek: true }; seek(xT(x)); }
+  renderKeyList();
+});
+tl.addEventListener("pointermove", (e) => {
+  if (!TL.drag) return;
+  const x = (e.offsetX / tl.getBoundingClientRect().width) * tl.width;
+  if (TL.drag.seek) seek(xT(x));
+  else if (TL.drag.key) { TL.drag.key.t = xT(x); keys.sort((a, b) => a.t - b.t); selKey = keys.indexOf(TL.drag.key); seek(TL.drag.key.t); changed(false); }
+});
+tl.addEventListener("pointerup", () => { if (TL.drag && TL.drag.key) changed(); TL.drag = null; });
+
+// ---------- keys & undo ----------
+function snapshot() { undo.push(JSON.stringify({ keys, range })); if (undo.length > 80) undo.shift(); $("undoBtn").disabled = false; }
+function doUndo() {
+  const s = undo.pop(); if (!s) return;
+  const o = JSON.parse(s); keys = o.keys; range = o.range; selKey = -1; adjusted = false;
+  $("undoBtn").disabled = !undo.length; changed(); toast("Undone");
+}
+function changed(full = true) { buildTrail(); if (full) { renderKeyList(); autosave(); } }
+function insertKey(k) {
+  keys = keys.filter((o) => Math.abs(o.t - k.t) > 0.02);
+  keys.push(k); keys.sort((a, b) => a.t - b.t);
+  return keys.indexOf(k);
+}
+function addKeyframe() {
+  if (!video.duration) return;
+  snapshot();
+  selKey = insertKey({ t: round3(video.currentTime), ...roundPose(pose), ease: "smooth" });
+  adjusted = false; changed(); toast("Keyframe added at " + fmt(video.currentTime));
+}
+function deleteKey(i) {
+  if (i < 0 || i >= keys.length) return;
+  snapshot(); keys.splice(i, 1); selKey = -1; adjusted = false; changed();
+}
+function round3(v) { return Math.round(v * 1000) / 1000; }
+function roundPose(p) { return { yaw: round3(p.yaw), pitch: round3(p.pitch), roll: round3(p.roll), fov: round3(p.fov) }; }
+
+function renderKeyList() {
+  const ul = $("keyList"); ul.textContent = "";
+  // collapse recorded stretches into one row each
+  const rows = [];
+  for (let i = 0; i < keys.length; i++) {
+    if (keys[i].ease === "linear" && rows.length && rows[rows.length - 1].rec && rows[rows.length - 1].end === i - 1) {
+      rows[rows.length - 1].end = i; continue;
+    }
+    rows.push({ start: i, end: i, rec: keys[i].ease === "linear" && keys[i + 1] && keys[i + 1].ease === "linear" });
+  }
+  for (const r of rows) {
+    const k = keys[r.start], li = document.createElement("li");
+    if (selKey >= r.start && selKey <= r.end) li.className = "sel";
+    const desc = r.rec && r.end > r.start
+      ? `Recorded move, ${(keys[r.end].t - k.t).toFixed(1)} s`
+      : `${headingName(k.yaw)}, ${k.pitch >= 0 ? "up" : "down"} ${Math.abs(k.pitch).toFixed(0)}°, zoom ${k.fov.toFixed(0)}°`;
+    li.innerHTML = `<span class="t">${fmt(k.t)}</span><span class="v"></span><button aria-label="Delete">Delete</button>`;
+    li.querySelector(".v").textContent = desc;
+    li.addEventListener("click", (e) => {
+      if (e.target.tagName === "BUTTON") {
+        snapshot(); keys.splice(r.start, r.end - r.start + 1); selKey = -1; adjusted = false; changed(); return;
+      }
+      selKey = r.start; seek(k.t); renderKeyList();
+    });
+    ul.appendChild(li);
+  }
+  $("keyCount").textContent = keys.length ? `(${rows.length})` : "";
+  $("keyHint").hidden = keys.length > 0;
+}
+function headingName(yaw) {
+  const w = ((yaw % 360) + 360) % 360;
+  const names = [[0, "Ahead"], [45, "Ahead right"], [90, "Right"], [135, "Behind right"], [180, "Behind"], [225, "Behind left"], [270, "Left"], [315, "Ahead left"], [360, "Ahead"]];
+  return names.reduce((a, b) => Math.abs(b[0] - w) < Math.abs(a[0] - w) ? b : a)[1];
+}
+
+// ---------- preset moves ----------
+function move(kind) {
+  if (!video.duration) return;
+  if (rec.active) stopRecord();
+  const t0 = video.currentTime, base = roundPose(pose);
+  const turn = clampNum($("turnIn").value, 0.3, 20, 1.5), hold = clampNum($("holdIn").value, 0, 30, 2);
+  const spin = clampNum($("spinIn").value, 1, 60, 6), dir = +$("spinDir").value, back = $("returnIn").checked;
+  let seq;
+  if (kind === "ahead") {
+    // Nearest "ahead" heading (yaw is unbounded, so ahead is any multiple of 360).
+    // On a tie (exactly behind), turn back the way the camera came.
+    const lo = Math.floor(base.yaw / 360) * 360, hi = lo + 360;
+    const dLo = Math.abs(base.yaw - lo), dHi = Math.abs(hi - base.yaw);
+    let yaw = dLo < dHi ? lo : hi;
+    if (Math.abs(dLo - dHi) < 1e-6) {
+      // the last keyframe before the playhead that faced a different way
+      let before = lo;
+      for (let i = keys.length - 1; i >= 0; i--) {
+        if (keys[i].t <= t0 + 1e-3 && Math.abs(keys[i].yaw - base.yaw) > 1) { before = keys[i].yaw; break; }
+      }
+      yaw = Math.abs(before - lo) <= Math.abs(before - hi) ? lo : hi;
+    }
+    const target = { ...base, yaw, pitch: 0, roll: 0 };
+    if (Math.abs(base.yaw - yaw) < 0.5 && Math.abs(base.pitch) < 0.5 && Math.abs(base.roll) < 0.5) {
+      toast("Already facing ahead."); return;
+    }
+    seq = [[0, base], [turn, target]];
+  } else if (kind === "spin") {
+    seq = [[0, base], [spin, { ...base, yaw: base.yaw + 360 * dir }]];
+  } else {
+    const target = kind === "behind" ? { ...base, yaw: base.yaw + 180 }
+      : kind === "up" ? { ...base, pitch: 80 } : { ...base, pitch: -80 };
+    seq = back ? [[0, base], [turn, target], [turn + hold, target], [2 * turn + hold, base]]
+               : [[0, base], [turn, target]];
+  }
+  const end = t0 + seq[seq.length - 1][0];
+  snapshot();
+  keys = keys.filter((k) => k.t < t0 - 0.02 || k.t > end + 0.02);
+  for (const [dt, p] of seq) insertKey({ t: round3(t0 + dt), ...roundPose(p), ease: "smooth" });
+  // after a spin the path continues from the new yaw; keep later keys facing the same way
+  selKey = -1; adjusted = false; changed();
+  const names = { behind: "Look behind", spin: "Full 360 spin", up: "Look up", down: "Look down", ahead: "Resume forward" };
+  toast(`${names[kind]} added: ${fmt(t0)} to ${fmt(end)}` + (end > video.duration ? " (runs past the end)" : ""));
+}
+function clampNum(v, lo, hi, d) { v = parseFloat(v); return isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d; }
+document.querySelectorAll("[data-move]").forEach((b) => b.addEventListener("click", () => move(b.dataset.move)));
+
+// ---------- recording ----------
+function startRecord() {
+  if (!video.duration) return;
+  rec.active = true; rec.start = video.currentTime; rec.samples = []; adjusted = false;
+  $("recBtn").classList.add("on"); $("recBtn").textContent = "Stop recording";
+  if (video.paused) video.play();
+  updateStatus();
+}
+function stopRecord() {
+  if (!rec.active) return;
+  rec.active = false;
+  $("recBtn").classList.remove("on"); $("recBtn").textContent = "Record";
+  const end = video.currentTime;
+  let s = rec.samples.filter((p) => p.t >= rec.start - 1e-3 && p.t <= end + 1e-3);
+  if (s.length < 2) { updateStatus(); toast("Nothing recorded. Drag while it plays."); return; }
+  // thin to ~20 samples per second
+  const thin = [s[0]];
+  for (const p of s) if (p.t - thin[thin.length - 1].t >= 0.05) thin.push(p);
+  if (thin[thin.length - 1] !== s[s.length - 1]) thin.push(s[s.length - 1]);
+  // steadying: centred moving average over a time window
+  const win = parseFloat($("smoothSel").value);
+  const smooth = thin.map((p) => {
+    if (!win) return p;
+    const near = thin.filter((q) => Math.abs(q.t - p.t) <= win / 2);
+    const avg = (f) => near.reduce((a, q) => a + q[f], 0) / near.length;
+    return { t: p.t, yaw: avg("yaw"), pitch: avg("pitch"), roll: avg("roll"), fov: avg("fov") };
+  });
+  snapshot();
+  const t0 = smooth[0].t, t1 = smooth[smooth.length - 1].t;
+  keys = keys.filter((k) => k.t < t0 - 0.02 || k.t > t1 + 0.02);
+  smooth.forEach((p, i) => insertKey({ t: round3(p.t), ...roundPose(p), ease: i === 0 ? "smooth" : "linear" }));
+  selKey = -1; changed(); updateStatus();
+  toast(`Recorded ${(t1 - t0).toFixed(1)} s of moves`);
+}
+
+// ---------- pointer look ----------
+let drag = null;
+view.addEventListener("pointerdown", (e) => {
+  if (!video.duration) return;
+  view.setPointerCapture(e.pointerId); view.classList.add("grabbing");
+  drag = { x: e.clientX, y: e.clientY };
+});
+view.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  const r = view.getBoundingClientRect(), k = pose.fov / Math.max(r.width, r.height);
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  drag = { x: e.clientX, y: e.clientY };
+  pose = { ...pose, yaw: pose.yaw - dx * k, pitch: Math.max(-89, Math.min(89, pose.pitch + dy * k)) };
+  if (!rec.active) adjusted = true;
+});
+const endDrag = () => { drag = null; view.classList.remove("grabbing"); };
+view.addEventListener("pointerup", endDrag); view.addEventListener("pointercancel", endDrag);
+view.addEventListener("wheel", (e) => {
+  if (!video.duration) return;
+  e.preventDefault();
+  setFov(pose.fov * Math.pow(1.0015, e.deltaY));
+}, { passive: false });
+function setFov(f) {
+  pose = { ...pose, fov: Math.max(30, Math.min(140, f)) };
+  if (!rec.active) adjusted = true;
+}
+$("fovIn").addEventListener("input", (e) => setFov(+e.target.value));
+
+// ---------- transport ----------
+function seek(t) { video.currentTime = Math.max(0, Math.min(video.duration || 0, t)); adjusted = false; }
+function togglePlay() {
+  if (!video.duration) return;
+  if (video.paused) { adjusted = false; video.play(); } else video.pause();
+}
+video.addEventListener("pause", () => { stopRecord(); $("playBtn").textContent = "Play"; updateStatus(); });
+video.addEventListener("play", () => { $("playBtn").textContent = "Pause"; updateStatus(); });
+video.addEventListener("ended", () => stopRecord());
+$("playBtn").onclick = togglePlay;
+$("recBtn").onclick = () => rec.active ? video.pause() : startRecord();
+$("keyBtn").onclick = addKeyframe;
+$("inBtn").onclick = () => { snapshot(); range.in = round3(video.currentTime); if (range.out != null && range.out <= range.in) range.out = null; autosave(); };
+$("outBtn").onclick = () => { snapshot(); const t = round3(video.currentTime); range.out = t > range.in ? t : null; autosave(); };
+$("undoBtn").onclick = doUndo;
+$("rateSel").onchange = (e) => { video.playbackRate = +e.target.value; };
+
+function updateStatus() {
+  const st = $("status");
+  if (!video.duration) { st.hidden = true; return; }
+  st.hidden = false; st.className = "";
+  if (rec.active) { st.className = "rec"; st.textContent = "Recording: drag to direct the camera"; return; }
+  if (adjusted && keys.length) {
+    st.textContent = "Free look. ";
+    const b1 = document.createElement("button"); b1.textContent = "Keyframe this view"; b1.onclick = addKeyframe;
+    const b2 = document.createElement("button"); b2.textContent = "Back to path"; b2.onclick = () => { adjusted = false; updateStatus(); };
+    st.append(b1, b2); return;
+  }
+  st.textContent = keys.length ? "Following your camera path" : "Drag to look around. Press K to keyframe, R to record.";
+}
+let lastStatus = "";
+
+// ---------- main loop ----------
+function frame() {
+  const t = video.currentTime || 0;
+  if (rec.active) {
+    const last = rec.samples[rec.samples.length - 1];
+    if (!last || t > last.t) rec.samples.push({ t, ...pose });
+  } else if (keys.length && !adjusted) {
+    pose = evalPath(keys, t);
+  }
+  drawView(); drawCompass(); drawMap(); drawTimeline();
+  $("time").textContent = `${fmt(t)} / ${fmt(video.duration || 0)}`;
+  $("readout").textContent = video.duration
+    ? `${headingName(pose.yaw)} ${(((pose.yaw % 360) + 360) % 360).toFixed(0)}°  ${pose.pitch >= 0 ? "up" : "down"} ${Math.abs(pose.pitch).toFixed(0)}°`
+    : "";
+  if (document.activeElement !== $("fovIn")) { $("fovIn").value = pose.fov.toFixed(0); }
+  $("fovVal").textContent = pose.fov.toFixed(0) + "°";
+  const sig = `${rec.active}|${adjusted}|${keys.length > 0}`;
+  if (sig !== lastStatus) { lastStatus = sig; updateStatus(); }
+  requestAnimationFrame(frame);
+}
+
+// ---------- files ----------
+function openVideo(file) {
+  if (!file) return;
+  if (video.src) URL.revokeObjectURL(video.src);
+  proxyName = file.name;
+  video.src = URL.createObjectURL(file);
+  video.load();
+  $("fileName").textContent = file.name;
+}
+video.addEventListener("loadedmetadata", () => {
+  if (video.videoWidth && Math.abs(video.videoWidth - 2 * video.videoHeight) > 4)
+    toast("This video isn't 2:1. Open an equirectangular 360 render or its preview copy.", 6000);
+  $("empty").hidden = true;
+  for (const id of ["playBtn", "recBtn", "keyBtn", "inBtn", "outBtn", "saveBtn", "exportBtn", "openPathBtn"]) $(id).disabled = false;
+  master = proxyName.replace(/\.proxy(\.[^.]+)$/i, "$1");
+  outFile = master.replace(/\.[^.]+$/, "") + ".director.mp4";
+  keys = []; range = { in: 0, out: null }; selKey = -1; undo.length = 0; $("undoBtn").disabled = true;
+  pose = { ...DEFAULT_POSE }; adjusted = false;
+  restore();
+  layout(); changed(); seek(0); view.focus();
+});
+video.addEventListener("error", () => {
+  toast("The browser can't play this file. Make a preview copy with director-proxy and open that.", 7000);
+});
+$("openBtn").onclick = $("emptyOpen").onclick = () => $("fileIn").click();
+$("fileIn").onchange = (e) => openVideo(e.target.files[0]);
+document.addEventListener("dragover", (e) => e.preventDefault());
+document.addEventListener("drop", (e) => {
+  e.preventDefault();
+  const f = [...e.dataTransfer.files];
+  const v = f.find((x) => x.type.startsWith("video/") || /\.(mp4|mov|mkv|webm)$/i.test(x.name));
+  const j = f.find((x) => /\.json$/i.test(x.name));
+  if (v) openVideo(v);
+  if (j) loadPathFile(j);
+});
+
+function projectData() {
+  return {
+    version: 1, app: "360 Director", proxy: proxyName, master,
+    source_osv: osvName || undefined, source_start_frame: sourceStart,
+    // Always write an end: an open range would let osvtool run to the end of the whole .OSV.
+    range: { in: range.in, out: range.out ?? (isFinite(video.duration) ? Math.floor(video.duration * 1000) / 1000 : null) },
+    output: { width: out.width, height: out.height, crf, codec, file: outFile },
+    keys: keys.map((k) => ({ t: k.t, yaw: k.yaw, pitch: k.pitch, roll: k.roll, fov: k.fov, ease: k.ease })),
+  };
+}
+function applyProject(p) {
+  if (!p || !Array.isArray(p.keys)) throw new Error("not a 360 Director path file");
+  keys = p.keys.filter((k) => isFinite(k.t)).map((k) => ({
+    t: +k.t, yaw: +k.yaw || 0, pitch: +k.pitch || 0, roll: +k.roll || 0, fov: +k.fov || 100,
+    ease: k.ease === "linear" ? "linear" : "smooth" })).sort((a, b) => a.t - b.t);
+  range = { in: +(p.range && p.range.in) || 0, out: p.range && p.range.out != null ? +p.range.out : null };
+  if (p.output) {
+    const sz = `${p.output.width}x${p.output.height}`;
+    if ([...$("frameSel").options].some((o) => o.value === sz)) { $("frameSel").value = sz; out = { width: +p.output.width, height: +p.output.height }; }
+    if (p.output.crf) crf = +p.output.crf;
+    if (p.output.codec) codec = p.output.codec;
+    if (p.output.file) outFile = p.output.file;
+  }
+  if (p.master) master = p.master;
+  if (p.source_osv) osvName = p.source_osv;
+  if (Number.isInteger(p.source_start_frame) && p.source_start_frame >= 0) sourceStart = p.source_start_frame;
+  selKey = -1; adjusted = false; layout(); changed();
+}
+function storeKey() { return "director:" + proxyName; }
+function autosave() {
+  if (!proxyName) return;
+  try { localStorage.setItem(storeKey(), JSON.stringify(projectData())); } catch (e) { /* storage unavailable */ }
+}
+function restore() {
+  try {
+    const s = localStorage.getItem(storeKey());
+    if (s) { applyProject(JSON.parse(s)); if (keys.length) toast(`Restored your moves for ${proxyName}`); }
+  } catch (e) { /* ignore */ }
+}
+function loadPathFile(file) {
+  file.text().then((txt) => {
+    try { snapshot(); applyProject(JSON.parse(txt)); autosave(); toast(`Loaded ${file.name}`); }
+    catch (e) { toast(`Couldn't read ${file.name}: ${e.message}`, 6000); }
+  });
+}
+$("openPathBtn").onclick = () => $("pathIn").click();
+$("pathIn").onchange = (e) => { if (e.target.files[0]) loadPathFile(e.target.files[0]); e.target.value = ""; };
+
+function pathFileName() { return master.replace(/\.[^.]+$/, "") + ".path.json"; }
+function downloadPath() {
+  const blob = new Blob([JSON.stringify(projectData(), null, 1)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = pathFileName();
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast(`Saved ${pathFileName()} to your downloads folder`);
+}
+$("saveBtn").onclick = downloadPath;
+
+// ---------- export dialog ----------
+function shq(s) { return /^[\w.\/~-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`; }
+function refreshExport() {
+  master = $("masterIn").value.trim() || master;
+  outFile = $("outIn").value.trim() || outFile;
+  crf = clampNum($("crfIn").value, 12, 32, 20);
+  codec = $("codecSel").value;
+  $("sizeOut").textContent = `${out.width} × ${out.height} (change it under Frame)`;
+  const rout = range.out ?? video.duration;
+  $("rangeOut").textContent = `${fmt(range.in)} to ${fmt(rout)} (${(rout - range.in).toFixed(1)} s)`;
+  osvName = $("osvIn").value.trim();
+  sourceStart = Math.max(0, Math.round(clampNum($("startIn").value, 0, 1e9, 0)));
+  const json = `~/Downloads/${shq(pathFileName())}`;
+  $("cmdOut").textContent = `director-render ${json}`;
+  const extra = (crf !== 20 ? ` --crf ${crf}` : "") + (codec === "libx264" ? " --codec libx264" : "");
+  $("osvCmdOut").textContent = osvName
+    ? `osvtool render ${shq(osvName)} --path ${json} --fit avata360 --color 709${extra} --out ${shq(outFile)}`
+    : "Type the original .OSV file name above to get this command.";
+  autosave();
+}
+$("exportBtn").onclick = () => {
+  if (rec.active) video.pause();
+  if (!keys.length) toast("No moves yet: the render will hold the current default view.", 5000);
+  $("masterIn").value = master; $("outIn").value = outFile; $("crfIn").value = crf; $("codecSel").value = codec;
+  $("osvIn").value = osvName; $("startIn").value = sourceStart;
+  refreshExport(); $("exportDlg").showModal();
+};
+for (const id of ["osvIn", "startIn", "masterIn", "outIn", "crfIn", "codecSel"]) $(id).addEventListener("input", refreshExport);
+$("dlBtn").onclick = () => { refreshExport(); downloadPath(); };
+async function copyCmd(id) {
+  refreshExport();
+  try { await navigator.clipboard.writeText($(id).textContent); toast("Command copied"); }
+  catch (e) { toast("Select the command and copy it with Ctrl+C"); }
+}
+$("copyBtn").onclick = () => copyCmd("cmdOut");
+$("copyOsvBtn").onclick = () => { if (!$("osvIn").value.trim()) { $("osvIn").focus(); toast("Type the .OSV file name first"); return; } copyCmd("osvCmdOut"); };
+$("closeDlg").onclick = () => $("exportDlg").close();
+$("frameSel").onchange = (e) => {
+  const [w, h] = e.target.value.split("x").map(Number);
+  out = { width: w, height: h }; layout(); autosave();
+};
+
+// ---------- keyboard ----------
+document.addEventListener("keydown", (e) => {
+  const tag = (e.target.tagName || "").toLowerCase();
+  if (["input", "select", "textarea"].includes(tag) || $("exportDlg").open) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); doUndo(); return; }
+  if (e.ctrlKey || e.metaKey || e.altKey || !video.duration) return;
+  const k = e.key;
+  if (k === " ") { e.preventDefault(); togglePlay(); }
+  else if (k === "r" || k === "R") { rec.active ? video.pause() : startRecord(); }
+  else if (k === "k" || k === "K") addKeyframe();
+  else if (k === "i" || k === "I") $("inBtn").click();
+  else if (k === "o" || k === "O") $("outBtn").click();
+  else if (k === "Delete" || k === "Backspace") { if (selKey >= 0) { e.preventDefault(); deleteKey(selKey); } }
+  else if (k === "ArrowLeft") { e.preventDefault(); seek(video.currentTime - (e.shiftKey ? 1 : 1 / 30)); }
+  else if (k === "ArrowRight") { e.preventDefault(); seek(video.currentTime + (e.shiftKey ? 1 : 1 / 30)); }
+  else if (k === "Home") seek(range.in);
+});
+
+// ---------- misc ----------
+function fmt(t, cs = true) {
+  t = Math.max(0, t || 0);
+  const m = Math.floor(t / 60), s = t - m * 60;
+  return cs ? `${m}:${s.toFixed(2).padStart(5, "0")}` : `${m}:${String(Math.floor(s)).padStart(2, "0")}`;
+}
+let toastTimer;
+function toast(msg, ms = 2600) {
+  const el = $("toast"); el.textContent = msg; el.classList.add("show");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove("show"), ms);
+}
+window.__director = { get keys() { return keys; }, get pose() { return pose; }, evalPath, projectData };
+layout(); renderKeyList(); requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
