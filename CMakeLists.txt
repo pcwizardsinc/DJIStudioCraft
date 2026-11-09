@@ -100,7 +100,21 @@ find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(CLI11 CONFIG REQUIRED)
+# tinyexr: vcpkg exports unofficial::tinyexr::tinyexr; the Fedora
+# (tinyexr-devel) and Debian/Ubuntu (libtinyexr-dev) packages export the
+# upstream tinyexr::tinyexr (or a bare tinyexr) instead.  Normalise them all
+# to the vcpkg name the module CMakeLists.txt files link against.
 find_package(tinyexr CONFIG REQUIRED)
+if(NOT TARGET unofficial::tinyexr::tinyexr)
+  add_library(unofficial::tinyexr::tinyexr INTERFACE IMPORTED)
+  if(TARGET tinyexr::tinyexr)
+    target_link_libraries(unofficial::tinyexr::tinyexr INTERFACE tinyexr::tinyexr)
+  elseif(TARGET tinyexr)
+    target_link_libraries(unofficial::tinyexr::tinyexr INTERFACE tinyexr)
+  else()
+    message(FATAL_ERROR "tinyexr was found but exports no known target (install tinyexr-devel)")
+  endif()
+endif()
 
 # OpenOSV Studio (tools/osvgui), the desktop app in front of osvtool, draws
 # with Dear ImGui on GLFW + OpenGL 3.  vcpkg.json asks for both on Windows
@@ -110,6 +124,13 @@ find_package(tinyexr CONFIG REQUIRED)
 find_package(imgui CONFIG QUIET)
 find_package(glfw3 CONFIG QUIET)
 find_package(OpenGL QUIET)
+# Linux: glfw-devel and the GL headers come from the distribution, Dear ImGui
+# (with its GLFW + OpenGL 3 backends) is built from source (cmake/OsvImGui.cmake).
+option(OSV_FETCH_IMGUI "Linux: build Dear ImGui from source when no imgui package is found" ON)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND OSV_FETCH_IMGUI AND NOT TARGET imgui::imgui
+   AND TARGET glfw AND TARGET OpenGL::GL)
+  include(OsvImGui)
+endif()
 if(TARGET imgui::imgui AND TARGET glfw AND TARGET OpenGL::GL)
   set(_osv_gui_available ON)
 else()
@@ -169,6 +190,22 @@ if(OSV_BUILD_OFX)
   if(WIN32 AND NOT _osv_vegas_added)
     add_subdirectory(plugins/vegas)
   endif()
+endif()
+
+# -----------------------------------------------------------------------------
+#  Install (Linux: `cmake --install build`, or an RPM %install section)
+# -----------------------------------------------------------------------------
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  include(GNUInstallDirs)
+  if(TARGET osvtool)
+    install(TARGETS osvtool RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  endif()
+  if(TARGET osvgui)
+    install(TARGETS osvgui RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(FILES packaging/linux/io.github.kemerd.OpenOSV.desktop
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+  endif()
+  install(FILES LICENSE NOTICE DESTINATION ${CMAKE_INSTALL_DOCDIR})
 endif()
 
 # -----------------------------------------------------------------------------

@@ -59,6 +59,37 @@ using namespace osv;
 using namespace osv::video;
 using Catch::Matchers::WithinAbs;
 
+#if !defined(_WIN32)
+#include <sys/wait.h>
+#endif
+
+namespace {
+
+/// std::system() for a command line whose program path is quoted, returning
+/// the program's exit code on every platform.  cmd.exe /c strips one outer
+/// pair of quotes from such a line, so Windows gets one added; POSIX sh would
+/// instead read the whole quoted line as a program name.  On POSIX
+/// std::system() returns a wait status (exit 1 comes back as 256), so it is
+/// decoded with WEXITSTATUS.
+int runShell(const std::string& commandLine) {
+#if defined(_WIN32)
+    return std::system(("\"" + commandLine + "\"").c_str());
+#else
+    const int status = std::system(commandLine.c_str());
+    return (status != -1 && WIFEXITED(status)) ? WEXITSTATUS(status) : -1;
+#endif
+}
+
+/// The null device for shell redirections.
+constexpr const char* kNullDevice =
+#if defined(_WIN32)
+    "nul";
+#else
+    "/dev/null";
+#endif
+
+}  // namespace
+
 namespace {
 
 // -----------------------------------------------------------------------------
@@ -2299,11 +2330,8 @@ TEST_CASE("osvtool extract --hevc / --audio / --imu / --frame run end to end", "
     if (!std::filesystem::exists(tool, ec)) {
         SKIP("osvtool not built at " << tool.string());
     }
-    // Windows cmd needs the whole command line wrapped in an extra pair of
-    // quotes when the program path itself is quoted.
     auto run = [&](const std::string& args) {
-        const std::string cmd = "\"\"" + tool.string() + "\" extract \"" + osvtest::sampleOsv().string() + "\" " + args + "\"";
-        return std::system(cmd.c_str());
+        return runShell("\"" + tool.string() + "\" extract \"" + osvtest::sampleOsv().string() + "\" " + args);
     };
     const std::filesystem::path hevc = osvtest::tempDir() / "cli_track.hevc";
     const std::filesystem::path aac = osvtest::tempDir() / "cli_audio.aac";
@@ -2326,9 +2354,9 @@ TEST_CASE("osvtool extract --hevc / --audio / --imu / --frame run end to end", "
     // Usage errors exit 1, missing input exits 2.
     REQUIRE(run("--hevc \"" + hevc.string() + "\" --audio \"" + aac.string() + "\"") == 1);
     REQUIRE(run("--frame 0 --lens 0 --out \"" + (osvtest::tempDir() / "cli_frame.png").string() + "\"") == 1);
-    const std::string missing = "\"\"" + tool.string() + "\" extract \"" +
-                                (osvtest::tempDir() / "missing.OSV").string() + "\" --audio \"" + aac.string() + "\"\"";
-    REQUIRE(std::system(missing.c_str()) == 2);
+    const std::string missing = "\"" + tool.string() + "\" extract \"" +
+                                (osvtest::tempDir() / "missing.OSV").string() + "\" --audio \"" + aac.string() + "\"";
+    REQUIRE(runShell(missing) == 2);
 }
 #endif
 
@@ -2599,10 +2627,10 @@ TEST_CASE("osvtool decode-replay replays a logged request order and holds the fr
     }
     const std::filesystem::path report = osvtest::tempDir() / "lostref_replay.txt";
     const std::filesystem::path csv = osvtest::tempDir() / "lostref_replay.csv";
-    const std::string cmd = "\"\"" + tool.string() + "\" -q decode-replay \"" + lostIdrFixture().string() +
+    const std::string cmd = "\"" + tool.string() + "\" -q decode-replay \"" + lostIdrFixture().string() +
                             "\" --trace \"" + trace.string() + "\" --tracks 1,2 --threads 2 --csv \"" + csv.string() +
-                            "\" > \"" + report.string() + "\" 2>&1\"";
-    const int code = std::system(cmd.c_str());
+                            "\" > \"" + report.string() + "\" 2>&1";
+    const int code = runShell(cmd);
     std::ifstream in(report);
     const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     INFO(text);
@@ -2619,11 +2647,9 @@ TEST_CASE("osvtool decode-replay replays a logged request order and holds the fr
     REQUIRE(std::getline(rows, header));
     CHECK(header.rfind("entry,trace,line,pid,tid,track,frame,logged", 0) == 0);
     // Usage errors exit 1: no trace, a bad level.
-    CHECK(std::system(("\"\"" + tool.string() + "\" decode-replay \"" + lostIdrFixture().string() + "\"\"").c_str()) ==
-          1);
-    CHECK(std::system(("\"\"" + tool.string() + "\" -q decode-replay \"" + lostIdrFixture().string() + "\" --trace \"" +
-                       trace.string() + "\" --tracks 1,2 --level frames > nul 2>&1\"")
-                          .c_str()) == 1);
+    CHECK(runShell("\"" + tool.string() + "\" decode-replay \"" + lostIdrFixture().string() + "\"") == 1);
+    CHECK(runShell("\"" + tool.string() + "\" -q decode-replay \"" + lostIdrFixture().string() + "\" --trace \"" +
+                   trace.string() + "\" --tracks 1,2 --level frames > " + kNullDevice + " 2>&1") == 1);
 }
 #endif
 

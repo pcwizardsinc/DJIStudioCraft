@@ -24,12 +24,24 @@ endforeach()
 
 # vcpkg ships a FindFFMPEG.cmake wrapper that fills FFMPEG_INCLUDE_DIRS,
 # FFMPEG_LIBRARIES and FFMPEG_LIBRARY_DIRS for the enabled components.
-find_package(FFMPEG REQUIRED)
-
-add_library(osv_ffmpeg INTERFACE)
-target_include_directories(osv_ffmpeg INTERFACE ${FFMPEG_INCLUDE_DIRS})
-target_link_directories(osv_ffmpeg INTERFACE ${FFMPEG_LIBRARY_DIRS})
-target_link_libraries(osv_ffmpeg INTERFACE ${FFMPEG_LIBRARIES})
+#
+# Linux (Fedora and friends) builds against the distribution's FFmpeg instead
+# of vcpkg's.  There is no FindFFMPEG.cmake there, so fall back to pkg-config,
+# which every distro FFmpeg -devel package ships .pc files for.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT DEFINED VCPKG_TOOLCHAIN)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(OSV_LIBAV REQUIRED IMPORTED_TARGET
+    libavcodec libavformat libavutil libswscale libswresample)
+  add_library(osv_ffmpeg INTERFACE)
+  target_link_libraries(osv_ffmpeg INTERFACE PkgConfig::OSV_LIBAV)
+  set(FFMPEG_INCLUDE_DIRS ${OSV_LIBAV_INCLUDE_DIRS})
+else()
+  find_package(FFMPEG REQUIRED)
+  add_library(osv_ffmpeg INTERFACE)
+  target_include_directories(osv_ffmpeg INTERFACE ${FFMPEG_INCLUDE_DIRS})
+  target_link_directories(osv_ffmpeg INTERFACE ${FFMPEG_LIBRARY_DIRS})
+  target_link_libraries(osv_ffmpeg INTERFACE ${FFMPEG_LIBRARIES})
+endif()
 
 # FFmpeg's public headers are C; make sure C++ consumers see the correct
 # declarations of the stdint macros they rely on.

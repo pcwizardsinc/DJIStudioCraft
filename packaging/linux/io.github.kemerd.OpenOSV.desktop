@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=OpenOSV Studio
+GenericName=360 Video Stitcher
+Comment=Stitch, grade and reframe DJI Osmo 360 / Avata 360 .OSV footage
+Exec=osvgui %F
+Icon=video-x-generic
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;
+MimeType=video/mp4;video/quicktime;
+Keywords=360;OSV;DJI;Osmo;Avata;stitch;reframe;

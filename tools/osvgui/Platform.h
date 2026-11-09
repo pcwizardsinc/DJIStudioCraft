@@ -56,7 +56,8 @@ void shutdown() noexcept;
 /// Pick a program (ffmpeg).  nullopt when cancelled.
 [[nodiscard]] std::optional<std::filesystem::path> chooseProgram(void* nativeWindow, const char* title) noexcept;
 
-/// True where chooseClips / chooseFolders exist (Windows, macOS).
+/// True where chooseClips / chooseFolders exist (Windows, macOS, and Linux
+/// desktops with zenity or kdialog installed).
 [[nodiscard]] bool haveDialogs() noexcept;
 
 // ---- the shell ---------------------------------------------------------------------

@@ -24,6 +24,7 @@
 #include <shlobj.h>
 #include <shobjidl.h>
 #else
+#include <cerrno>
 #include <climits>
 #include <spawn.h>
 #include <sys/wait.h>
@@ -434,9 +435,10 @@ fs::path findOnPath(std::string_view name) noexcept {
 std::vector<fs::path> extraFfmpegLocations() noexcept {
     std::vector<fs::path> out;
     try {
-        // Homebrew (Apple Silicon, then Intel), MacPorts, the system.
-        for (const char* candidate :
-             {"/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/opt/local/bin/ffmpeg", "/usr/bin/ffmpeg"}) {
+        // Homebrew (Apple Silicon, then Intel), MacPorts, the system, and the
+        // Flatpak/Snap-free locations Linux users install a static build to.
+        for (const char* candidate : {"/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/opt/local/bin/ffmpeg",
+                                      "/usr/bin/ffmpeg", "/opt/ffmpeg/bin/ffmpeg"}) {
             if (isExecutableFile(candidate)) {
                 out.emplace_back(candidate);
             }
@@ -451,22 +453,191 @@ void setTaskbarProgress(void*, double, bool, bool) noexcept {}
 void styleTitleBar(void*, bool, unsigned) noexcept {}
 
 #if !defined(__APPLE__)
-// ---- no native dialogs outside Windows and macOS: drag and drop instead -------
+// ---- Linux / BSD: GTK or Qt dialogs through zenity or kdialog ---------------
+//
+// Neither GLFW nor Dear ImGui has a file dialog, and linking GTK or Qt into
+// the app for three dialogs would dwarf the app itself.  Every mainstream
+// desktop ships a dialog helper instead: zenity (GNOME, the Fedora
+// Workstation default) or kdialog (KDE Plasma).  The helper prints the chosen
+// paths on stdout, one per line, and exits non-zero on Cancel.
+
+namespace {
+
+enum class DialogTool { None, Zenity, Kdialog };
+
+DialogTool dialogTool() noexcept {
+    // KDE first when the session says so, so Plasma users get Qt dialogs even
+    // with zenity installed; everyone else gets zenity, then kdialog.
+    const char* desktop = std::getenv("XDG_CURRENT_DESKTOP");
+    const bool kde = desktop && std::string_view(desktop).find("KDE") != std::string_view::npos;
+    const bool haveZenity = !findOnPath("zenity").empty();
+    const bool haveKdialog = !findOnPath("kdialog").empty();
+    if (kde && haveKdialog) {
+        return DialogTool::Kdialog;
+    }
+    if (haveZenity) {
+        return DialogTool::Zenity;
+    }
+    if (haveKdialog) {
+        return DialogTool::Kdialog;
+    }
+    return DialogTool::None;
+}
+
+/// Run `argv` (argv[0] looked up on PATH), wait for it, and return its stdout
+/// split into lines.  Empty when the helper fails or the user cancels.
+std::vector<std::string> runForLines(std::vector<std::string> args) noexcept {
+    std::vector<std::string> lines;
+    try {
+        int fds[2] = {-1, -1};
+        if (::pipe(fds) != 0) {
+            return lines;
+        }
+        posix_spawn_file_actions_t actions;
+        posix_spawn_file_actions_init(&actions);
+        posix_spawn_file_actions_adddup2(&actions, fds[1], STDOUT_FILENO);
+        posix_spawn_file_actions_addclose(&actions, fds[0]);
+        posix_spawn_file_actions_addclose(&actions, fds[1]);
+
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 1);
+        for (std::string& a : args) {
+            argv.push_back(a.data());
+        }
+        argv.push_back(nullptr);
+
+        pid_t pid = -1;
+        const int spawned = ::posix_spawnp(&pid, argv[0], &actions, nullptr, argv.data(), environ);
+        posix_spawn_file_actions_destroy(&actions);
+        ::close(fds[1]);
+        if (spawned != 0 || pid <= 0) {
+            ::close(fds[0]);
+            return lines;
+        }
+
+        std::string out;
+        char buffer[4096];
+        for (;;) {
+            const ssize_t got = ::read(fds[0], buffer, sizeof buffer);
+            if (got > 0) {
+                out.append(buffer, static_cast<std::size_t>(got));
+            } else if (got == 0 || errno != EINTR) {
+                break;
+            }
+        }
+        ::close(fds[0]);
+
+        int status = 0;
+        while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+        }
+        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+            return lines;  // Cancel, or the helper failed.
+        }
+
+        std::size_t start = 0;
+        while (start < out.size()) {
+            std::size_t end = out.find('\n', start);
+            if (end == std::string::npos) {
+                end = out.size();
+            }
+            std::string line = out.substr(start, end - start);
+            if (!line.empty() && line.back() == '\r') {
+                line.pop_back();
+            }
+            if (!line.empty()) {
+                lines.push_back(std::move(line));
+            }
+            start = end + 1;
+        }
+    } catch (...) {
+        lines.clear();
+    }
+    return lines;
+}
+
+std::vector<fs::path> toPaths(const std::vector<std::string>& lines) {
+    std::vector<fs::path> out;
+    out.reserve(lines.size());
+    for (const std::string& line : lines) {
+        out.push_back(pathFromUtf8(line));
+    }
+    return out;
+}
+
+std::string homeDirectory() {
+    const char* home = std::getenv("HOME");
+    return home && *home ? std::string(home) + "/" : std::string(".");
+}
+
+}  // namespace
 
 std::vector<fs::path> chooseClips(void*) noexcept {
+    try {
+        switch (dialogTool()) {
+        case DialogTool::Zenity:
+            return toPaths(runForLines({"zenity", "--file-selection", "--multiple", "--separator=\n",
+                                        "--title=Add clips",
+                                        "--file-filter=DJI 360 clips (*.OSV) | *.OSV *.osv",
+                                        "--file-filter=All files | *"}));
+        case DialogTool::Kdialog:
+            return toPaths(runForLines({"kdialog", "--title", "Add clips", "--multiple", "--separate-output",
+                                        "--getopenfilename", homeDirectory(),
+                                        "DJI 360 clips (*.OSV *.osv)\nAll files (*)"}));
+        case DialogTool::None:
+            break;
+        }
+    } catch (...) {
+    }
     return {};
 }
 
-std::vector<fs::path> chooseFolders(void*, const char*, bool) noexcept {
+std::vector<fs::path> chooseFolders(void*, const char* title, bool multiple) noexcept {
+    try {
+        const std::string t = title ? title : "Choose a folder";
+        switch (dialogTool()) {
+        case DialogTool::Zenity: {
+            std::vector<std::string> args{"zenity", "--file-selection", "--directory", "--separator=\n",
+                                          "--title=" + t};
+            if (multiple) {
+                args.emplace_back("--multiple");
+            }
+            return toPaths(runForLines(std::move(args)));
+        }
+        case DialogTool::Kdialog:
+            // kdialog picks one folder at a time; "Add folders" can be used again.
+            return toPaths(runForLines({"kdialog", "--title", t, "--getexistingdirectory", homeDirectory()}));
+        case DialogTool::None:
+            break;
+        }
+    } catch (...) {
+    }
     return {};
 }
 
-std::optional<fs::path> chooseProgram(void*, const char*) noexcept {
+std::optional<fs::path> chooseProgram(void*, const char* title) noexcept {
+    try {
+        const std::string t = title ? title : "Choose a program";
+        std::vector<fs::path> picked;
+        switch (dialogTool()) {
+        case DialogTool::Zenity:
+            picked = toPaths(runForLines({"zenity", "--file-selection", "--title=" + t, "--filename=/usr/bin/"}));
+            break;
+        case DialogTool::Kdialog:
+            picked = toPaths(runForLines({"kdialog", "--title", t, "--getopenfilename", "/usr/bin/"}));
+            break;
+        case DialogTool::None:
+            break;
+        }
+        if (!picked.empty()) {
+            return picked.front();
+        }
+    } catch (...) {
+    }
     return std::nullopt;
 }
 
 bool haveDialogs() noexcept {
-    return false;
+    return dialogTool() != DialogTool::None;
 }
 
 namespace {

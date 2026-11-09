@@ -253,9 +253,83 @@ Result<AttitudeTrack> AttitudeTrack::build(const meta::MetadataTrack& track, con
     const Quatd mountedFromBody =
         options.conv.rigAxes ? Quatd::fromMatrix(productMount(track.schema()).transposed()).normalized()
                              : Quatd::identity();
+    // [DJI-Craft] Avata 360 pitch reading.  On Avata 360 clips recorded with
+    // firmware 01.00.06.00 in 4K / 100 fps mode, the rig-axes reading above
+    // puts the aircraft's nose at the world's down while the aircraft flies
+    // level: the IMU frame differs from the mounted RFU frame by a quarter
+    // turn about the aircraft's right axis.  Upstream verified its reading on
+    // other Avata footage, so the correction is measured, not assumed: of the
+    // four pitch turns about the mounted right axis (0, +90, -90, 180 deg),
+    // the one whose mounted up is most vertical over the clip wins - an
+    // aircraft flies near level on average - and 0 is kept unless another
+    // turn is clearly better.  The Osmo 360 (identity mount) never changes.
+    Quatd pitchFix = Quatd::identity();
+    if (options.conv.rigAxes && productMount(track.schema()).distance(Mat3d::identity()) > 0.0) {
+        const Vec3d up = (options.measuredUp.norm() > 0.5) ? options.measuredUp.normalized()
+                                                                 : worldUpVector(options.conv.up);
+        constexpr double kHalfPi = 1.5707963267948966;
+        const Quatd candidates[4] = {Quatd::identity(), Quatd::fromAxisAngle(Vec3d{1.0, 0.0, 0.0}, kHalfPi),
+                                     Quatd::fromAxisAngle(Vec3d{1.0, 0.0, 0.0}, -kHalfPi),
+                                     Quatd::fromAxisAngle(Vec3d{1.0, 0.0, 0.0}, 2.0 * kHalfPi)};
+        double sums[4] = {0.0, 0.0, 0.0, 0.0};
+        std::size_t used = 0;
+        const std::uint32_t step = std::max<std::uint32_t>(1u, frameCount / 200u);
+        for (std::uint32_t i = 0; i < frameCount; i += step) {
+            const Result<meta::FrameMeta> fr = track.frame(i);
+            if (!fr.ok()) {
+                continue;
+            }
+            const meta::FrameMeta& f = fr.value();
+            const meta::Quaternion* q = nullptr;
+            if (f.camera.attitude.present) {
+                q = &f.camera.attitude;
+            } else if (f.imu.has_value() && f.imu->current.present) {
+                for (const meta::Quaternion& c : f.imu->current.q) {
+                    if (c.present) {
+                        q = &c;
+                        break;
+                    }
+                }
+            }
+            if (!q) {
+                continue;
+            }
+            const Quatd wFromMounted = worldFromBodyQuat(*q, options.conv);
+            for (int k = 0; k < 4; ++k) {
+                const Vec3d mountedUp = (wFromMounted * candidates[k]).toMatrix() * Vec3d{0.0, 0.0, 1.0};
+                if (mountedUp.isFinite()) {
+                    sums[k] += mountedUp.dot(up);
+                }
+            }
+            ++used;
+        }
+        if (used > 0) {
+            int best = 0;
+            for (int k = 1; k < 4; ++k) {
+                if (sums[k] > sums[best]) {
+                    best = k;
+                }
+            }
+            const double meanBest = sums[best] / static_cast<double>(used);
+            const double meanKept = sums[0] / static_cast<double>(used);
+            // Switch only on a clear verdict: the winner near vertical, the
+            // stored reading well short of it.
+            int chosen = 0;
+            if (best != 0 && meanBest > 0.7 && meanBest - meanKept > 0.3) {
+                pitchFix = candidates[best];
+                chosen = best;
+            }
+            static constexpr const char* kNames[4] = {"0", "+90", "-90", "180"};
+            log::info("AttitudeTrack: product-mounted reading: pitch turn {} deg (mounted up . world up over {} "
+                      "frames: 0 deg {:.3f}, +90 {:.3f}, -90 {:.3f}, 180 {:.3f})",
+                      kNames[chosen], used, sums[0] / static_cast<double>(used),
+                      sums[1] / static_cast<double>(used), sums[2] / static_cast<double>(used),
+                      sums[3] / static_cast<double>(used));
+        }
+    }
     const auto decodeSampleQuat = [&](const meta::Quaternion& q) noexcept -> Quatd {
         const Quatd wFromMounted = worldFromBodyQuat(q, options.conv);
-        return options.conv.rigAxes ? (wFromMounted * mountedFromBody).normalized() : wFromMounted;
+        return options.conv.rigAxes ? (wFromMounted * pitchFix * mountedFromBody).normalized() : wFromMounted;
     };
 
     for (std::uint32_t i = 0; i < frameCount; ++i) {
