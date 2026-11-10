@@ -51,7 +51,7 @@ Rules that follow from this:
 - **One GPU path, OpenCL, for every vendor.** The CUDA renderer stays off in the RPM build: NVIDIA's compiler trails Fedora's GCC, and OpenCL already runs on NVIDIA cards.
 - **The app configures itself.** It sets `RUSTICL_ENABLE` before loading OpenCL, so nobody has to edit environment files, and it shows which device it's using.
 - **Always a fallback.** Every hardware path falls back to software without failing the edit.
-- **Test machines:** the iMac (AMD Polaris), a laptop with an NVIDIA RTX GPU, and an AMD-only laptop; a CPU-only run as well.
+- **Test machines:** the iMac (AMD Polaris), a laptop with an NVIDIA GTX 1650 Ti, and an AMD-only laptop; a CPU-only run as well.
 
 ## Status
 
@@ -64,7 +64,7 @@ Rules that follow from this:
 | Stitch quality on 4K-mode footage | Looks clean at preview size; full-resolution check pending |
 | D-Log M to Rec.709 colour | Works; Avata fit (`--fit avata360`) must be chosen by hand today |
 | Horizon levelling on Avata 360 | Fixed on `djicraft`, verified on frames 300 and 4300 |
-| GPU rendering (OpenCL via Rusticl on the Radeon Pro 580X) | Works when `RUSTICL_ENABLE=radeonsi` is set; confirm it's picked up after a fresh login |
+| GPU rendering (OpenCL) | Detected on AMD (iMac, Radeon Pro 580X via Rusticl, needs `RUSTICL_ENABLE=radeonsi`) and NVIDIA (laptop, GTX 1650 Ti, proprietary driver 615.78.08); footage render on NVIDIA pending |
 | Hardware video decoding on Linux | Missing (engine never tries VA-API) |
 | Editor (timeline, preview, keyframes) | Not started |
 | RPM | Not started |
@@ -123,6 +123,7 @@ Each phase ends with something usable and a check done on the iMac with real foo
 - ~~Commit the two patches on a branch in the local OpenOSV clone, and push to `github.com/pcwizardsinc/DJIStudioCraft`.~~ Done: fork created, `djicraft` pushed (commit `2797546`).
 - Keep `ROADMAP.md` and `BUILD-FEDORA.md` in the repo under `avata360/`.
 - Make `djicraft` the fork's default branch.
+- ~~Fresh-clone build on a second machine.~~ Done 2026-11-09 on a fresh Fedora 45 laptop with an NVIDIA GTX 1650 Ti (Secure Boot on); found and fixed two gaps in `BUILD-FEDORA.md` (`OpenCL-ICD-Loader-devel`, `miniz-devel`) and documented Secure Boot key enrollment.
 - **Done when:** a fresh clone of DJIStudioCraft builds by following `BUILD-FEDORA.md` on a second machine (the NVIDIA laptop is the best choice: it doubles as the first NVIDIA test).
 
 ### Phase 1: Engine fixes
@@ -218,6 +219,7 @@ Every engine fix is offered to [Kemerd/OpenOSV](https://github.com/Kemerd/OpenOS
 
 | Date | Session |
 |---|---|
+| 2026-11-09 | Phase 0 complete: fresh clone built on an NVIDIA laptop (GTX 1650 Ti, OpenCL 3.0 via the proprietary driver). Build guide fixed for fresh installs and Secure Boot. |
 | 2026-11-09 | Phase 0: GitHub fork `pcwizardsinc/DJIStudioCraft` created; branch `djicraft` pushed with the Fedora build and Avata levelling commits. |
 | 2026-11-09 | Scope set: Avata 360 video only, all recording modes; any GPU on Fedora; name "Avata 360 Editor"; fixes go to the fork and upstream. |
 | 2026-11-09 | Engine built and running on Fedora 45. Linux build patch (FFmpeg/tinyexr discovery, Dear ImGui, Linux file dialogs, install rules, portable CLI tests; 596/596 tests pass against FFmpeg 9.0.2). Avata 360 footage probed and rendered; levelling bug found and fixed. Decision: build everything into OpenOSV Studio as one application. |

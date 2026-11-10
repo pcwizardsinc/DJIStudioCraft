@@ -49,8 +49,10 @@ ffmpeg -hide_banner -decoders 2>/dev/null | grep -w hevc
 ## 2. Build dependencies
 
 ```
-sudo dnf install gcc-c++ cmake ninja-build git pkgconf-pkg-config ffmpeg-devel fmt-devel spdlog-devel cli11-devel tinyexr-devel catch-devel ocl-icd-devel opencl-headers glfw-devel zenity clinfo 'cmake(nlohmann_json)' 'pkgconfig(gl)'
+sudo dnf install gcc-c++ cmake ninja-build git pkgconf-pkg-config ffmpeg-devel fmt-devel spdlog-devel cli11-devel tinyexr-devel miniz-devel catch-devel OpenCL-ICD-Loader-devel opencl-headers glfw-devel zenity clinfo 'cmake(nlohmann_json)' 'pkgconfig(gl)'
 ```
+
+`OpenCL-ICD-Loader-devel` matches the OpenCL loader that RPM Fusion's FFmpeg pulls in on a fresh Fedora 45 install. On a machine upgraded from an older Fedora that already has the `ocl-icd` loader, use `ocl-icd-devel` in its place; dnf reports a conflict between the two if you pick the wrong one.
 
 Use `catch-devel` (Catch2 v3). `catch2-devel` is the old Catch2 v2 and the tests will not compile against it.
 
@@ -136,6 +138,18 @@ OpenOSV renders through OpenCL on Linux. Install the runtime for your GPU, then 
 | AMD Radeon | `mesa-libOpenCL` | Run with `RUSTICL_ENABLE=radeonsi` set, e.g. `RUSTICL_ENABLE=radeonsi osvgui` |
 | Intel | `intel-compute-runtime` | |
 
+### NVIDIA with Secure Boot
+
+If `mokutil --sb-state` says `SecureBoot enabled`, the NVIDIA driver won't load (`nvidia-smi` can't reach the driver) until the key that signs it is trusted by the firmware. Once per machine:
+
+```
+sudo kmodgenca -a
+sudo akmods --force --rebuild
+sudo mokutil --import /etc/pki/akmods/certs/public_key.der
+```
+
+`mokutil` asks you to make up a one-time password. Reboot; a blue **MOK management** screen appears. Press a key straight away (it times out in about 10 seconds), then choose **Enroll MOK** > **Continue** > **Yes**, enter the password, and **Reboot**. Afterwards `nvidia-smi` shows the GPU and `clinfo -l` lists it.
+
 CUDA is left off (`-DOSV_ENABLE_CUDA=OFF`). NVIDIA's `nvcc` usually does not support the newest GCC Fedora ships, and NVIDIA cards run the OpenCL path fine.
 
 ## Using it
@@ -183,6 +197,8 @@ One failure is expected: `FFmpeg build is LGPL and reports its version`. It chec
 | `Package 'libavcodec' ... not found` at configure | `ffmpeg-devel` is not installed, or the swap in step 1 did not happen. `rpm -q ffmpeg ffmpeg-devel` should show RPM Fusion packages |
 | `Could not find a package configuration file provided by "tinyexr"` | `sudo dnf install tinyexr-devel` |
 | Catch2 errors such as `catch2/catch_test_macros.hpp: No such file` | `catch2-devel` (v2) is installed instead of `catch-devel` (v3). `sudo dnf swap catch2-devel catch-devel` |
+| dnf: `OpenCL-ICD-Loader ... conflicts with ocl-icd` | Two OpenCL loaders exist and only one can be installed. Install the `-devel` package matching the loader you have: `rpm -q OpenCL-ICD-Loader ocl-icd` shows which |
+| Link fails: `cannot find -lminiz` | Fedora's `tinyexr-devel` links against miniz without pulling in its development files. `sudo dnf install miniz-devel`, then `cmake --build build` again |
 | Configure fails downloading Dear ImGui | No internet during configure. Download `https://github.com/ocornut/imgui/archive/refs/tags/v1.92.9b.tar.gz`, unpack it, and add `-DOSV_IMGUI_SOURCE_DIR=/path/to/imgui-1.92.9b` |
 | `Studio (GUI) : OFF` in the configure summary | `glfw-devel` or the OpenGL headers are missing. Re-run step 2 |
 | "Add clips" button missing or does nothing in OpenOSV Studio | zenity (GNOME) or kdialog (KDE) is not installed. Drag and drop onto the window works regardless |
