@@ -17,6 +17,7 @@
 #pragma once
 
 #include "CommandBuilder.h"
+#include "Project.h"
 #include "Queue.h"
 #include "Runner.h"
 #include "Settings.h"
@@ -41,6 +42,7 @@ namespace osvgui {
 struct AppOptions {
     std::vector<std::filesystem::path> initialPaths;  ///< Files / folders from the command line.
     bool autoStart = false;                           ///< Start the batch once they are queued (--start).
+    bool startInEditor = false;                       ///< Open in editor mode (--editor).
     std::filesystem::path settingsPath;               ///< Where the settings live (empty = not saved).
     GuiSettings settings;                             ///< As loaded.
     std::string loadError;                            ///< Why the settings file could not be read, if so.
@@ -130,6 +132,19 @@ private:
     void drawToast();
     void drawCloseModal();
 
+    // ---- editor mode (Phase 2) ----------------------------------------------------------
+    // The four-region editor (media bin, preview, inspector, timeline) drawn in
+    // place of the batch layout when m_editorMode is on.  Editor.cpp.
+    void drawEditor(float x, float y, float width, float height);
+    void drawMediaBin(ImVec2 size);
+    void drawPreview(ImVec2 size);
+    void drawInspector(ImVec2 size);
+    void drawTimeline(ImVec2 size);
+    void drawModeToggle(float x, float y, float width);
+    /// Replace the project's clips with the current queue (New / first entry
+    /// into editor mode), or merge the queue into the open project.
+    void syncProjectFromQueue();
+
     // ---- helpers ------------------------------------------------------------------------
     void addFilesDialog();
     void addFolderDialog();
@@ -149,6 +164,12 @@ private:
 
     ClipQueue m_queue;
     std::uint64_t m_selectedId = 0;
+
+    // ---- editor mode (Phase 2) ----------------------------------------------------------
+    bool m_editorMode = false;         ///< Editor layout vs the batch queue.
+    Project m_project;                 ///< The open document (editor mode).
+    std::size_t m_editClip = 0;        ///< Index of the selected clip in m_project.
+    std::int64_t m_playhead = 0;       ///< Timeline position, frames (Phase 3/4).
 
     ProcessRunner m_runner;
     Toolchain m_toolchain;

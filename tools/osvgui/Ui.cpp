@@ -147,6 +147,7 @@ App::App(AppOptions options)
     , m_settingsPath(std::move(options.settingsPath))
     , m_runner([] { glfwPostEmptyEvent(); })
     , m_autoStart(options.autoStart) {
+    m_editorMode = options.startInEditor;
     m_savedText = settingsToJsonText(m_settings);
     if (!options.loadError.empty()) {
         appendLog("Settings file unreadable, defaults used: " + options.loadError, kLogError);
@@ -280,6 +281,8 @@ void App::frame() {
         // ---- top: header and banners --------------------------------------------------------
         float y = px(14.0f);
         drawHeader(margin, y, innerW);
+        // Batch / Editor toggle, right-aligned in the header strip.
+        drawModeToggle(margin + innerW - px(220.0f), y + px(6.0f), px(220.0f));
         y += px(kHeaderHeight) + px(10.0f);
         y += drawBanners(margin, y, innerW);
 
@@ -294,6 +297,18 @@ void App::frame() {
         const float mainH = std::max(px(120.0f), commandY - gap - y);
 
         // ---- the main area ----------------------------------------------------------------------
+        if (m_editorMode) {
+            // The editor uses the full main area; the command/log strip below
+            // belongs to the batch tool, so give the editor the room down to
+            // the footer instead.
+            const float editorH = std::max(px(200.0f), (H - footerH - gap) - y);
+            drawEditor(margin, y, innerW, editorH);
+            drawFooter(0.0f, H - footerH, W, footerH);
+            drawToast();
+            drawCloseModal();
+            ImGui::End();
+            return;
+        }
         const bool wide = innerW >= px(kWideLayout);
         ImGui::SetCursorPos(ImVec2(margin, y));
         if (wide) {
@@ -468,6 +483,12 @@ void App::pollScans() {
         }
         toast(message, added == 0 && result.clips.empty());
         appendLog(message, kLogNote);
+        // Editor mode mirrors the queue as the project's clip list; a scan that
+        // just added clips (including the ones passed with --editor, which
+        // arrive here a few frames after launch) must refresh it.
+        if (m_editorMode && added > 0) {
+            syncProjectFromQueue();
+        }
     }
 }
 

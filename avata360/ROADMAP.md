@@ -66,7 +66,7 @@ Rules that follow from this:
 | Horizon levelling on Avata 360 | Fixed on `djicraft`, verified on frames 300 and 4300 |
 | GPU rendering (OpenCL) | Detected on AMD (iMac, Radeon Pro 580X via Rusticl, needs `RUSTICL_ENABLE=radeonsi`) and NVIDIA (laptop, GTX 1650 Ti, proprietary driver 615.78.08). NVIDIA end to end on DangTree: NVDEC decode, OpenCL render, NVENC HEVC 10-bit encode |
 | Hardware video decoding on Linux | NVDEC confirmed on NVIDIA; VA-API confirmed on the iMac's Radeon (`decoding with vaapi`) |
-| Editor (timeline, preview, keyframes) | Not started |
+| Editor (timeline, preview, keyframes) | Phase 2: project model + four-region layout done; preview rendering next |
 | RPM | Not started |
 
 ## Working setup
@@ -78,7 +78,7 @@ Rules that follow from this:
 | Repository | [pcwizardsinc/DJIStudioCraft](https://github.com/pcwizardsinc/DJIStudioCraft), a fork of OpenOSV; work on branch `djicraft` |
 | Local clone | `~/DJI-Craft/OpenOSV` (remotes: `origin` = the fork, `upstream` = Kemerd/OpenOSV) |
 | Based on | upstream commit `d46b2bc` (v0.6.4) |
-| Project docs | `avata360/` in the repo: this file and `BUILD-FEDORA.md` |
+| Project docs | `avata360/` in the repo: this file, `BUILD-FEDORA.md`, `UI-REFERENCE.md` |
 | Test footage | `~/DJI-Craft/footage/DangTree/` |
 | Build | `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOSV_ENABLE_CUDA=OFF -DOSV_BUILD_TESTS=OFF`, then `cmake --build build` |
 | Before running | `conda deactivate`, and `RUSTICL_ENABLE=radeonsi` (set permanently in `~/.config/environment.d/rusticl.conf`) |
@@ -143,8 +143,8 @@ Each phase ends with something usable and a check done on the iMac with real foo
 
 ### Phase 2: Editor shell
 
-- Project file (JSON): clips, timeline, per-clip settings, keyframes.
-- Window layout modelled on DJI Studio (see `Interface/`): media bin, viewer, inspector, timeline.
+- ~~Project file (JSON): clips, timeline, per-clip settings, keyframes.~~ Done (`phase2-project-model.patch`): a `.avp` project model (Project.h/.cpp in osvgui_core) holding an ordered clip list, per-clip edit settings reusing GuiSettings, in/out points, and a forward-compatible keyframe slot; atomic save/load; 6 round-trip tests pass.
+- ~~Window layout modelled on DJI Studio: media bin, viewer, inspector, timeline.~~ Done (`phase2.patch`): a four-region editor (media bin left, preview centre, inspector right, timeline bottom) drawn in Editor.cpp, reached by a Batch/Editor toggle, `--editor` to open straight into it. Inspector edits the selected clip's pan/tilt/FOV live; preview and timeline are placeholders until the next steps. Verified with a headless screenshot.
 - Open/save projects; import `.OSV` with its `.LRF` and `.SRT` found automatically, and Single Lens `.MP4` clips as flat video.
 - **Done when:** a project with DangTree can be created, saved, closed and reopened.
 
@@ -162,17 +162,27 @@ Each phase ends with something usable and a check done on the iMac with real foo
 - A new clip starts from the pilot's recorded flight view, as DJI's own playback does, ready to edit.
 - **Done when:** a multi-keyframe camera move plays back smoothly and exports identically.
 
+### Phase 4b: Multi-clip timeline
+
+DJI Studio (see `avata360/UI-REFERENCE.md`) puts several clips on one timeline and cuts between them, which is broader than a single keyframe track per clip. Needed so a project is a sequence, not just one clip at a time.
+
+- Drag clips from the media bin onto a timeline track in order.
+- Trim clip edges; split at the playhead (Ctrl+K); cut left / cut right.
+- Per-clip speed / slow-motion (with the 100 fps → 50/25 conform already noted).
+- **Done when:** two DangTree clips play back as one sequence with a cut between them and export as a single file.
+
 ### Phase 5: View modes
 
 - Asteroid (tiny planet), ultra-wide, wide, selfie and dewarp, plus flat and full 360.
 - Follow (level) and FPV (rolls with the aircraft) framing.
+- Selfie View preset, shown only when the clip's metadata says the in-camera Editing Assistant was on.
 - Animated transitions between modes.
 - **Done when:** each mode renders correctly on DangTree and can be keyframed.
 
 ### Phase 6: Colour and stabilization panel
 
 - Exposure, contrast, temperature, tint, shadows, highlights, saturation on top of the D-Log M conversion.
-- Stabilization choices (off, horizon, full, smooth, smooth + horizon) and LUT import.
+- Stabilization choices (off, horizon, full, smooth, smooth + horizon), selfie-stick erase (the guard stage) as a toggle, and LUT import.
 - **Done when:** a grade made in the panel matches the exported file.
 
 ### Phase 7: Audio
@@ -224,6 +234,9 @@ Every engine fix is offered to [Kemerd/OpenOSV](https://github.com/Kemerd/OpenOS
 
 | Date | Session |
 |---|---|
+| 2026-11-11 | DJI Studio UI reference captured (`UI-REFERENCE.md`); roadmap gains Phase 4b (multi-clip timeline), inspector metadata, selfie-stick erase and Selfie View. Editor bin-sync and console-spam fixes. |
+| 2026-11-11 | Phase 2 editor shell: four-region layout (bin/preview/inspector/timeline) in Editor.cpp behind a Batch/Editor toggle; inspector binds pan/tilt/FOV to the selected clip; GUI tests pass; headless screenshot confirms layout. |
+| 2026-11-11 | Phase 2 begun: `.avp` project document model (clips, per-clip edits, in/out, keyframe slot) with atomic save/load and round-trip tests, built into osvgui_core. |
 | 2026-11-10 | iMac VA-API decode confirmed (`decoding with vaapi`). Two AMD-only bugs surfaced: the NVIDIA-only encoder default (fixed: `--codec auto` probe) and a Rusticl OpenCL kernel crash (open; CPU fallback works). |
 | 2026-11-09 | NVIDIA footage test: 300 frames of DangTree at 3840×1920 rendered level with NVDEC + OpenCL + NVENC; levelling fix chose a −90° pitch turn (0.962 vs 0.193 for no turn); 1.8 fps steady state. |
 | 2026-11-09 | Phase 0 complete: fresh clone built on an NVIDIA laptop (GTX 1650 Ti, OpenCL 3.0 via the proprietary driver). Build guide fixed for fresh installs and Secure Boot. |

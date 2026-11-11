@@ -72,6 +72,7 @@ namespace fs = std::filesystem;
 struct Arguments {
     std::vector<fs::path> paths;
     bool start = false;
+    bool editor = false;
     fs::path screenshot;
     double screenshotDelay = 0.0;
 };
@@ -82,6 +83,8 @@ Arguments parseArguments(const std::vector<std::string>& args) {
         const std::string& a = args[i];
         if (a == "--start") {
             out.start = true;
+        } else if (a == "--editor") {
+            out.editor = true;
         } else if (a == "--screenshot" && i + 1 < args.size()) {
             out.screenshot = pathFromUtf8(args[++i]);
         } else if (a == "--screenshot-delay" && i + 1 < args.size()) {
@@ -295,6 +298,7 @@ int run(const std::vector<std::string>& rawArgs) {
     }
     options.initialPaths = args.paths;
     options.autoStart = args.start;
+    options.startInEditor = args.editor;
 
     // ---- GLFW and the window ------------------------------------------------------------------
     glfwSetErrorCallback(onGlfwError);
@@ -394,6 +398,11 @@ int run(const std::vector<std::string>& rawArgs) {
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigErrorRecoveryEnableAssert = false;  // recover, never abort, on a UI mistake
     io.ConfigErrorRecoveryEnableTooltip = false;
+    // The queue list positions rows with a clipper + SetCursorScreenPos, which
+    // the pinned Dear ImGui (1.92.9b, newer than upstream built against) flags
+    // as a recoverable boundary warning every frame.  It is cosmetic and the
+    // recovery already handles it; keep it out of the console.
+    io.ConfigErrorRecoveryEnableDebugLog = false;
     style::loadFonts();
     style::apply(options.settings.theme != "light", scale);
     ImGui_ImplGlfw_InitForOpenGL(window, true);

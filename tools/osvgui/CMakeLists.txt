@@ -17,6 +17,7 @@
 add_library(osvgui_core STATIC
   Queue.cpp
   Settings.cpp
+  Project.cpp
   CommandBuilder.cpp
   Progress.cpp)
 target_include_directories(osvgui_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -34,6 +35,7 @@ endif()
 add_executable(osvgui WIN32
   main.cpp
   Ui.cpp
+  Editor.cpp
   Widgets.cpp
   Style.cpp
   Runner.cpp

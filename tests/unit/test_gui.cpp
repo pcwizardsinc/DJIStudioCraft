@@ -18,6 +18,7 @@
 #include "Progress.h"
 #include "Queue.h"
 #include "Settings.h"
+#include "Project.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -625,3 +626,107 @@ TEST_CASE("gui: the settings file is written and read back", "[gui]") {
 }
 
 #endif  // OSV_HAVE_GUI_CORE
+
+// ===========================================================================
+//  Project document model (Project.h) - Phase 2
+// ===========================================================================
+
+TEST_CASE("project: built from clips carries the defaults", "[gui]") {
+    GuiSettings defaults;
+    defaults.mode = "reframe";
+    defaults.yaw = 42.0;
+    defaults.codec = "auto";
+    const std::vector<fs::path> sources = {"/clips/CAM_0001.OSV", "/clips/CAM_0002.OSV"};
+
+    const Project p = projectFromClips(sources, defaults);
+    REQUIRE(p.size() == 2);
+    CHECK(p.clips[0].name == "CAM_0001.OSV");
+    CHECK(p.clips[1].name == "CAM_0002.OSV");
+    CHECK(p.clips[0].edit.yaw == Catch::Approx(42.0));
+    CHECK(p.clips[0].edit.mode == "reframe");
+    CHECK(p.output.codec == "auto");
+    CHECK(p.dirty);  // a fresh non-empty project has unsaved content
+}
+
+TEST_CASE("project: survives a JSON round trip, per-clip edits kept", "[gui]") {
+    GuiSettings defaults;
+    Project p = projectFromClips({"/clips/A.OSV", "/clips/B.OSV"}, defaults);
+    // Edit the two clips differently.
+    p.clips[0].edit.yaw = 90.0;
+    p.clips[0].edit.mode = "reframe";
+    p.clips[1].edit.pitch = -30.0;
+    p.clips[1].inFrame = 100;
+    p.clips[1].outFrame = 500;
+    p.audioBed = "/music/bed.mp3";
+
+    const std::string json = projectToJson(p);
+    REQUIRE_FALSE(json.empty());
+
+    std::string error;
+    const std::optional<Project> back = projectFromJson(json, &error);
+    REQUIRE(back.has_value());
+    REQUIRE(back->size() == 2);
+    CHECK(back->clips[0].edit.yaw == Catch::Approx(90.0));
+    CHECK(back->clips[0].edit.mode == "reframe");
+    CHECK(back->clips[1].edit.pitch == Catch::Approx(-30.0));
+    CHECK(back->clips[1].inFrame == 100);
+    CHECK(back->clips[1].outFrame == 500);
+    CHECK(pathToUtf8(back->clips[1].source) == "/clips/B.OSV");
+    CHECK(pathToUtf8(back->audioBed) == "/music/bed.mp3");
+}
+
+TEST_CASE("project: a newer schema is refused", "[gui]") {
+    const std::string json = R"({"schema": 999, "clips": []})";
+    std::string error;
+    const std::optional<Project> back = projectFromJson(json, &error);
+    CHECK_FALSE(back.has_value());
+    CHECK_FALSE(error.empty());
+}
+
+TEST_CASE("project: garbage is rejected without throwing", "[gui]") {
+    std::string error;
+    CHECK_FALSE(projectFromJson("not json at all", &error).has_value());
+    CHECK_FALSE(projectFromJson("[1,2,3]", &error).has_value());  // array, not object
+}
+
+TEST_CASE("project: an unknown keyframe block round-trips untouched", "[gui]") {
+    // Forward-compat: a project written by a keyframe-aware build must survive
+    // a load+save in this one without losing the keyframe data.
+    const std::string json = R"({
+      "schema": 1,
+      "clips": [
+        {"source": "/clips/A.OSV", "name": "A.OSV",
+         "keyframes": [{"t": 0, "yaw": 0}, {"t": 100, "yaw": 90}]}
+      ]
+    })";
+    std::string error;
+    const std::optional<Project> loaded = projectFromJson(json, &error);
+    REQUIRE(loaded.has_value());
+    REQUIRE(loaded->size() == 1);
+    CHECK_FALSE(loaded->clips[0].keyframesJson.empty());
+
+    const std::string out = projectToJson(*loaded);
+    CHECK(out.find("\"keyframes\"") != std::string::npos);
+    CHECK(out.find("90") != std::string::npos);
+}
+
+TEST_CASE("project: writes and reads back from disk", "[gui]") {
+    GuiSettings defaults;
+    Project p = projectFromClips({"/clips/A.OSV"}, defaults);
+    p.clips[0].edit.yaw = 15.0;
+
+    const fs::path file = fs::temp_directory_path() / "osvgui_test_project.avp";
+    std::string error;
+    REQUIRE(saveProject(p, file, &error));
+    CHECK_FALSE(p.dirty);                 // cleared on save
+    CHECK(p.path == file);                // recorded on save
+
+    const std::optional<Project> back = loadProject(file, &error);
+    REQUIRE(back.has_value());
+    CHECK(back->clips[0].edit.yaw == Catch::Approx(15.0));
+    CHECK(back->path == file);
+    CHECK_FALSE(back->dirty);
+
+    std::error_code ec;
+    fs::remove(file, ec);
+}
