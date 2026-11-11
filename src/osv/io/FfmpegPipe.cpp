@@ -5,6 +5,9 @@
 #include "osv/core/Log.h"
 
 #include <algorithm>
+#include <unordered_map>
+#include <mutex>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -317,6 +320,18 @@ std::vector<std::string> buildFfmpegArgs(const FfmpegPipeOptions& o, const std::
         a.push_back("0");
         a.push_back("-profile:v");
         a.push_back("main10");
+    } else if (codec.find("qsv") != std::string::npos) {
+        // Intel Quick Sync (hevc_qsv): global_quality is its CRF-equivalent.
+        a.push_back("-global_quality");
+        a.push_back(std::to_string(o.crf));
+        a.push_back("-profile:v");
+        a.push_back("main10");
+    } else if (codec.find("vaapi") != std::string::npos) {
+        // VA-API encoders (hevc_vaapi) take -qp for constant quality.
+        a.push_back("-qp");
+        a.push_back(std::to_string(std::clamp(o.crf, 0, 51)));
+        a.push_back("-profile:v");
+        a.push_back("main10");
     } else if (codec.find("amf") != std::string::npos) {
         // AMD AMF encoders (hevc_amf, h264_amf, av1_amf) do not accept -crf and
         // silently fall back to a low default bitrate (~25 Mbps at 8K) unless
@@ -581,6 +596,52 @@ struct FfmpegPipeWriter::Impl {
 #endif
     }
 
+    /// Run `args` to completion (no frames are fed: the child reads its own
+    /// lavfi input), killing it after `timeoutMs`.  Returns true only when
+    /// ffmpeg exits 0 - used by bestHevcEncoder to test an encoder for real.
+    bool runToCompletion(const std::filesystem::path& exe, const std::vector<std::string>& args, unsigned timeoutMs,
+                         std::string* error) {
+        if (!start(exe, args, 0, error)) {
+            // start() with probeMs 0 never reports the early-exit path, so a
+            // false here is a genuine spawn failure.
+            return false;
+        }
+#if defined(_WIN32)
+        CloseHandle(stdinWrite);  // the child uses lavfi, not our pipe
+        stdinWrite = nullptr;
+        const DWORD waited = WaitForSingleObject(process, timeoutMs);
+        DWORD code = 1;
+        if (waited == WAIT_OBJECT_0) {
+            GetExitCodeProcess(process, &code);
+        } else {
+            TerminateProcess(process, 1);
+        }
+        CloseHandle(process);
+        process = nullptr;
+        if (waited != WAIT_OBJECT_0 && error) {
+            *error = "encoder probe timed out";
+        }
+        return waited == WAIT_OBJECT_0 && code == 0;
+#else
+        if (stdinWrite >= 0) {
+            ::close(stdinWrite);  // the child uses lavfi, not our pipe
+            stdinWrite = -1;
+        }
+        int status = 0;
+        if (!waitForExit(process, timeoutMs, &status)) {
+            ::kill(process, SIGKILL);
+            (void)waitForExit(process, 2000, &status);
+            process = -1;
+            if (error) {
+                *error = "encoder probe timed out";
+            }
+            return false;
+        }
+        process = -1;
+        return exitCodeOf(status) == 0;
+#endif
+    }
+
     bool writeAll(const std::uint8_t* data, std::size_t bytes) noexcept {
 #if defined(_WIN32)
         while (bytes > 0) {
@@ -669,6 +730,88 @@ std::filesystem::path FfmpegPipeWriter::resolveExecutable(const std::filesystem:
     }
 #endif
     return std::filesystem::path("ffmpeg");
+}
+
+std::string FfmpegPipeWriter::bestHevcEncoder(const std::filesystem::path& ffmpegExe,
+                                             const std::vector<std::string>& preference, int crf) {
+    // Cache the answer per (resolved ffmpeg path + encoder list + crf family):
+    // the test run spawns ffmpeg once per candidate, so a multi-clip render or
+    // the GUI probing at startup pays only on the first call.
+    static std::mutex cacheMutex;
+    static std::unordered_map<std::string, std::string> cache;
+
+    const std::filesystem::path exe = resolveExecutable(ffmpegExe);
+    std::string key = exe.string();
+    key.push_back('\n');
+    for (const std::string& c : preference) {
+        key += c;
+        key.push_back(',');
+    }
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        const auto it = cache.find(key);
+        if (it != cache.end()) {
+            return it->second;
+        }
+    }
+
+    // A tiny synthetic clip through the very quality flags a real render uses,
+    // so an encoder that loads but cannot open (hevc_nvenc with no NVIDIA GPU,
+    // hevc_vaapi with no VA device) is rejected here instead of at the first
+    // streamed frame.  buildFfmpegArgs' per-family block is the authority on
+    // those flags; this mirrors its 10-bit path.
+    FfmpegPipeOptions probe;
+    probe.width = 320;
+    probe.height = 240;
+    probe.fps = 30.0;
+    probe.crf = crf;
+    probe.pixFmt = "yuv420p10le";
+
+    std::string winner;
+    for (const std::string& codec : preference) {
+        std::vector<std::string> a = {"-hide_banner", "-loglevel", "error", "-nostdin", "-f",         "lavfi",
+                                      "-i",           "color=c=black:s=320x240:r=30",   "-frames:v", "5"};
+        // Reuse the real builder for the codec-specific tail, then redirect to
+        // the null muxer: everything after "-i -" in buildFfmpegArgs is the
+        // "-c:v <codec> -pix_fmt ... <quality>" we want, minus the input args.
+        // buildFfmpegArgs ends with "... -c:v <codec> -pix_fmt <fmt> <quality>
+        // -movflags ... -tag:v ... <outpath>".  Copy the span from "-c:v" up
+        // to (but not including) the first container/output flag, so the probe
+        // keeps exactly the encoder and its quality knobs and nothing that
+        // only a real .mp4 muxer accepts; then send it to the null muxer.
+        const std::vector<std::string> full = buildFfmpegArgs(probe, codec, std::filesystem::path("out.mp4"));
+        std::size_t begin = full.size();
+        for (std::size_t i = 0; i + 1 < full.size(); ++i) {
+            if (full[i] == "-c:v") {
+                begin = i;
+                break;
+            }
+        }
+        for (std::size_t i = begin; i < full.size(); ++i) {
+            if (full[i] == "-movflags" || full[i] == "-tag:v") {
+                break;  // container-only tail; the output path follows it
+            }
+            a.push_back(full[i]);
+        }
+        a.push_back("-f");
+        a.push_back("null");
+        a.push_back("-");
+
+        FfmpegPipeWriter w;
+        std::string error;
+        // A 5-frame null encode finishes well within 4 s; a working encoder
+        // exits 0, a broken one exits non-zero.  start() returns false on an
+        // early exit, so success here means "still running after the probe
+        // window" OR "exited cleanly" - distinguish by waiting.
+        if (w.m_impl->runToCompletion(exe, a, 4000, &error)) {
+            winner = codec;
+            break;
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    cache[key] = winner;
+    return winner;
 }
 
 Result<FfmpegPipeWriter> FfmpegPipeWriter::open(const FfmpegPipeOptions& options, const std::filesystem::path& out) {

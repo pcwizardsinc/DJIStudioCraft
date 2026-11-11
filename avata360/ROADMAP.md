@@ -64,8 +64,8 @@ Rules that follow from this:
 | Stitch quality on 4K-mode footage | Looks clean at preview size; full-resolution check pending |
 | D-Log M to Rec.709 colour | Works; Avata fit (`--fit avata360`) must be chosen by hand today |
 | Horizon levelling on Avata 360 | Fixed on `djicraft`, verified on frames 300 and 4300 |
-| GPU rendering (OpenCL) | Detected on AMD (iMac, Radeon Pro 580X via Rusticl, needs `RUSTICL_ENABLE=radeonsi`) and NVIDIA (laptop, GTX 1650 Ti, proprietary driver 615.78.08); footage render on NVIDIA pending |
-| Hardware video decoding on Linux | Missing (engine never tries VA-API) |
+| GPU rendering (OpenCL) | Detected on AMD (iMac, Radeon Pro 580X via Rusticl, needs `RUSTICL_ENABLE=radeonsi`) and NVIDIA (laptop, GTX 1650 Ti, proprietary driver 615.78.08). NVIDIA end to end on DangTree: NVDEC decode, OpenCL render, NVENC HEVC 10-bit encode |
+| Hardware video decoding on Linux | NVDEC confirmed on NVIDIA; VA-API confirmed on the iMac's Radeon (`decoding with vaapi`) |
 | Editor (timeline, preview, keyframes) | Not started |
 | RPM | Not started |
 
@@ -112,7 +112,10 @@ Camera: Avata 360, firmware 01.00.06.00. Stitched output tops out at 3840×1920 
 5. **100 fps sources.** 100 doesn't divide into 60. The editor needs 50 fps playback/export and slow-motion options (25/30 fps conform).
 6. **Rusticl libclc warning.** Fedora's libclc lacks Rusticl's recommended patches. Harmless so far; if a render shows wrong colours or blocky patches, suspect this first and compare with a CPU render.
 7. **Free DaVinci Resolve on Linux can't import H.264/H.265.** Exports meant for Resolve need DNxHR (or ProRes) in `.mov`.
-8. **Licensing.** RPM Fusion's FFmpeg is a GPL build. The RPM must depend on it, not bundle it, and keep OpenOSV's `LICENSE` and `NOTICE`.
+8. **Encoder was NVIDIA-only (fixed, `phase1-encoder.patch`).** `osvtool` hard-coded `hevc_nvenc`, which loads but fails to open on AMD/Intel machines a second too late for the pipe's fallback to catch, so exports produced no file on the iMac. `--codec` now defaults to `auto`: the tool probes hevc_nvenc, hevc_vaapi, hevc_qsv, hevc_amf, hevc_videotoolbox, libx265 and uses the first that runs. VA-API and QSV encode flags added to the pipe.
+9. **OpenCL render crashes on the iMac's Radeon** (`nir_shader not fully linked`) and falls back to CPU. A Rusticl/libclc compiler bug on the engine's GPU kernels; needs debugging on AMD hardware, not reproducible without a GPU. The render still completes on the CPU. Investigate in Phase 1.
+10. **Render speed is low.** 4K 360° export of DangTree on the GTX 1650 Ti laptop: about 28 s of one-time clip analysis, then 1.8 fps (the 85 s clip would take about 80 minutes). CPU time was 2.3× wall time, so a CPU stage is likely the bottleneck rather than the GPU. Profile in Phase 1.
+9. **Licensing.** RPM Fusion's FFmpeg is a GPL build. The RPM must depend on it, not bundle it, and keep OpenOSV's `LICENSE` and `NOTICE`.
 
 ## Phases
 
@@ -128,11 +131,13 @@ Each phase ends with something usable and a check done on the iMac with real foo
 
 ### Phase 1: Engine fixes
 
-- VA-API hardware decoding (AMD, Intel); confirm the existing NVDEC path on an NVIDIA machine.
-- The app sets `RUSTICL_ENABLE` itself and reports the GPU it's using; OpenCL verified on AMD, Intel and NVIDIA.
-- Pick the D-Log M fit and look from the camera model; Normal-colour clips pass through untouched.
+- VA-API hardware decoding (AMD, Intel): confirmed on the iMac's Radeon Pro 580X with `mesa-va-drivers-freeworld`. NVDEC confirmed on the NVIDIA laptop.
+- Encoder auto-selection (`phase1-encoder.patch`): `--codec auto` probes for a working HEVC encoder, awaiting the iMac test.
+- OpenCL render crash on the Radeon (Rusticl/libclc): open; render falls back to CPU meanwhile.
+- The app sets `RUSTICL_ENABLE` itself: written (`phase1-zero-config.patch`), awaiting the iMac test. OpenCL confirmed on AMD and NVIDIA; Intel untested.
+- Pick the D-Log M fit from the camera model: written (`phase1-zero-config.patch`), awaiting the iMac test. Normal-colour clips pass through untouched.
 - Read the pilot's recorded view (pan, tilt, FOV, roll) and the gimbal mode (Follow / FPV) from the metadata, if the clip holds them.
-- Measure real render speed on the GPU (a 3-second MP4 render) and record it here.
+- Find the render bottleneck (1.8 fps at 4K on the GTX 1650 Ti) and fix it; measure the iMac too.
 - Full-resolution seam check on 4K-mode footage; test 8K footage once recorded.
 - **Done when:** DangTree renders level, correctly coloured and GPU-accelerated with no manual flags, on the iMac and on an NVIDIA machine.
 
@@ -219,6 +224,8 @@ Every engine fix is offered to [Kemerd/OpenOSV](https://github.com/Kemerd/OpenOS
 
 | Date | Session |
 |---|---|
+| 2026-11-10 | iMac VA-API decode confirmed (`decoding with vaapi`). Two AMD-only bugs surfaced: the NVIDIA-only encoder default (fixed: `--codec auto` probe) and a Rusticl OpenCL kernel crash (open; CPU fallback works). |
+| 2026-11-09 | NVIDIA footage test: 300 frames of DangTree at 3840×1920 rendered level with NVDEC + OpenCL + NVENC; levelling fix chose a −90° pitch turn (0.962 vs 0.193 for no turn); 1.8 fps steady state. |
 | 2026-11-09 | Phase 0 complete: fresh clone built on an NVIDIA laptop (GTX 1650 Ti, OpenCL 3.0 via the proprietary driver). Build guide fixed for fresh installs and Secure Boot. |
 | 2026-11-09 | Phase 0: GitHub fork `pcwizardsinc/DJIStudioCraft` created; branch `djicraft` pushed with the Fedora build and Avata levelling commits. |
 | 2026-11-09 | Scope set: Avata 360 video only, all recording modes; any GPU on Fedora; name "Avata 360 Editor"; fixes go to the fork and upstream. |

@@ -159,7 +159,36 @@ struct DeviceEntry {
  *
  * @return  Sorted list of available OpenCL devices.
  */
+#if defined(__linux__)
+/**
+ * @brief Let Mesa's Rusticl serve AMD and Intel GPUs on Linux.
+ *
+ * Rusticl is Mesa's OpenCL implementation and the only one shipped for AMD
+ * GPUs on Fedora, but it exposes no device unless RUSTICL_ENABLE names the
+ * driver.  Unless the user set the variable, enable it for radeonsi (AMD)
+ * and iris (Intel) before the first OpenCL call loads the ICDs.  NVIDIA and
+ * Intel's own compute runtime are unaffected; a duplicate Intel device from
+ * both runtimes is harmless because only the best-ranked device is used.
+ */
+void enableRusticlOnce() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        if (std::getenv("RUSTICL_ENABLE") != nullptr) {
+            log::debug("OpenCL: RUSTICL_ENABLE={} (set by the user)", std::getenv("RUSTICL_ENABLE"));
+            return;
+        }
+        if (::setenv("RUSTICL_ENABLE", "radeonsi,iris", 0) == 0) {
+            log::debug("OpenCL: enabled Mesa Rusticl for AMD and Intel GPUs (RUSTICL_ENABLE=radeonsi,iris); "
+                      "set RUSTICL_ENABLE yourself to override");
+        }
+    });
+}
+#endif
+
 std::vector<DeviceEntry> enumerateDevices() {
+#if defined(__linux__)
+    enableRusticlOnce();
+#endif
     std::vector<DeviceEntry> result;
     cl_uint platformCount = 0;
     if (clGetPlatformIDs(0, nullptr, &platformCount) != CL_SUCCESS || platformCount == 0) {

@@ -174,8 +174,15 @@ private:
     }
 }
 
-/// Map the prefs enum onto the library's D-Log M curve fit.
-[[nodiscard]] color::DlogMFit toDlogMFit(PrefsDlogmFit fit) noexcept {
+/// Map the prefs enum onto the library's D-Log M curve fit for a clip from
+/// `schema`'s camera.  The Osmo 360 fit is the project default, so an Avata
+/// 360 clip left on that default gets its own camera's fit instead: the
+/// Osmo 360 curve is never the right one for Avata footage.  Every other
+/// choice is honoured as made.
+[[nodiscard]] color::DlogMFit toDlogMFit(PrefsDlogmFit fit, meta::DjmdSchema schema) noexcept {
+    if (fit == PrefsDlogmFit::Osmo360 && schema == meta::DjmdSchema::Avata360) {
+        return color::DlogMFit::Avata360;
+    }
     switch (fit) {
     case PrefsDlogmFit::Pocket3:  return color::DlogMFit::Pocket3;
     case PrefsDlogmFit::DjiRefit: return color::DlogMFit::DjiRefit;
@@ -1113,6 +1120,15 @@ Status ImporterInstance::ensureReader() {
     if (!m_hwDecodeFailed && !proxySoftware) {
 #if defined(__APPLE__)
         order.push_back(video::HwAccel::VideoToolbox);
+#elif defined(__linux__)
+        // Linux: NVDEC first, then VA-API (AMD, Intel) with the same host
+        // copy as D3D11VA.  NVDEC leads because a VA-API device can open on a
+        // driver without HEVC Main10 (Fedora's own Mesa, an older Intel
+        // iGPU beside an NVIDIA GPU) and then drop the stream to software,
+        // where NVDEC would have decoded it; on a machine without NVIDIA
+        // hardware NVDEC fails at once and costs nothing.
+        order.push_back(video::HwAccel::Cuda);
+        order.push_back(video::HwAccel::Vaapi);
 #else
         order.push_back(video::HwAccel::D3D11VA);
         order.push_back(video::HwAccel::Cuda);
@@ -1985,7 +2001,7 @@ void ImporterInstance::rebuildColor() {
     // Rec.709 (the one output with a fitted look) and ignores it otherwise.
     // [WP-HDRPEAK] Likewise the HDR peak, which only the PQ output uses, and
     // [WP-HDRTONE] the transfer function, which only D-Log M to PQ / HLG uses.
-    m_color = color::makeColorParams(toDlogMFit(m_prefs.fit()), toOutputTransfer(m_prefs.color()),
+    m_color = color::makeColorParams(toDlogMFit(m_prefs.fit(), m_track.schema()), toOutputTransfer(m_prefs.color()),
                                      m_prefs.exposureStops, input, true,
                                      video::kDecodedSampleBits, nullptr, color::kBt2408SceneScale,
                                      toLook(m_prefs.lookChoice()), m_prefs.hdrPeakNits(),
@@ -3529,7 +3545,7 @@ std::optional<SceneLightRequest> ImporterInstance::sceneRequestLocked() {
         // no exposure offset - the cap is compared against METERED grey.
         r.rig = m_baseRig;
         r.blend = m_blend;
-        r.linearColor = color::makeColorParams(toDlogMFit(m_prefs.fit()), color::OutputTransfer::Linear, 0.0f,
+        r.linearColor = color::makeColorParams(toDlogMFit(m_prefs.fit(), m_track.schema()), color::OutputTransfer::Linear, 0.0f,
                                                inputEncodingFor(m_format.colorMode), true, video::kDecodedSampleBits);
         return r;
     } catch (const std::exception& e) {
@@ -4405,7 +4421,7 @@ Result<ImporterInstance::DirectFrame> ImporterInstance::directFrame(std::uint32_
         // working space rolls off into the peak chosen for it.
         // [WP-HDRTONE] And its transfer function: a Rec.709 clip rendered
         // into a PQ or HLG working space gets the style chosen for HDR.
-        color = color::makeColorParams(toDlogMFit(m_prefs.fit()), static_cast<color::OutputTransfer>(outputTransfer),
+        color = color::makeColorParams(toDlogMFit(m_prefs.fit(), m_track.schema()), static_cast<color::OutputTransfer>(outputTransfer),
                                        m_prefs.exposureStops, inputEncodingFor(m_format.colorMode), true,
                                        video::kDecodedSampleBits, nullptr,
                                        color::kBt2408SceneScale, toLook(m_prefs.lookChoice()),
@@ -4608,7 +4624,7 @@ OsvColorParams ImporterInstance::colorForTransfer(int outputTransfer) const {
     // connection-space override renders the look the user chose,
     // [WP-HDRPEAK] a PQ one the HDR peak the user chose, and [WP-HDRTONE] a
     // PQ or HLG one the transfer function the user chose.
-    return color::makeColorParams(toDlogMFit(m_prefs.fit()), static_cast<color::OutputTransfer>(outputTransfer),
+    return color::makeColorParams(toDlogMFit(m_prefs.fit(), m_track.schema()), static_cast<color::OutputTransfer>(outputTransfer),
                                   m_prefs.exposureStops, inputEncodingFor(m_format.colorMode), true,
                                   video::kDecodedSampleBits, nullptr, color::kBt2408SceneScale,
                                   toLook(m_prefs.lookChoice()), m_prefs.hdrPeakNits(),

@@ -161,7 +161,8 @@ void addPipelineOptions(CLI::App* sub, PipelineOptions& opt) {
     // osmo360 matches DJI's own D-Log M LUT, which DJI ships unchanged for the
     // Pocket 3 as well; pocket3 is a legacy community fit (see docs/COLOR.md).
     colorGroup->add_option("--fit", opt.fit,
-                           "D-Log M curve: osmo360 (DJI-matched, also for Pocket 3)|avata360|dji|pocket3 (legacy)")
+                           "D-Log M curve: osmo360 (DJI-matched, also for Pocket 3; on Avata 360 clips the default becomes "
+                           "avata360)|avata360|dji|pocket3 (legacy)")
         ->default_str("osmo360");
     colorGroup->add_option("--input-encoding", opt.inputEncoding, "auto|dlogm|hlg|normal")->default_str("auto");
     colorGroup->add_option("--exposure", opt.exposureStops, "Exposure offset in stops")->default_val(0.0);
@@ -181,7 +182,7 @@ void addPipelineOptions(CLI::App* sub, PipelineOptions& opt) {
 #if defined(__APPLE__)
     backendGroup->add_option("--hw", opt.hw, "Decoder acceleration: none|videotoolbox|auto")->default_str("none");
 #else
-    backendGroup->add_option("--hw", opt.hw, "Decoder acceleration: none|d3d11va|cuda|auto")->default_str("none");
+    backendGroup->add_option("--hw", opt.hw, "Decoder acceleration: none|d3d11va|cuda|vaapi (Linux)|auto")->default_str("none");
 #endif
 #if defined(__APPLE__)
     backendGroup->add_option("--device", opt.device, "Renderer: cpu|metal|opencl|auto")->default_str("auto");

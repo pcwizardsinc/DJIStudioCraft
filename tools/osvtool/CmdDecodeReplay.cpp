@@ -927,7 +927,7 @@ void registerDecodeReplayCommand(CLI::App& app, CommandContext& ctx) {
 #if defined(__APPLE__)
     sub->add_option("--hw", opt->hw, "Decoder of the replay: none, videotoolbox")->capture_default_str();
 #else
-    sub->add_option("--hw", opt->hw, "Decoder of the replay: none, d3d11va, cuda (FFmpeg NVDEC, host copies)")
+    sub->add_option("--hw", opt->hw, "Decoder of the replay: none, d3d11va, cuda (FFmpeg NVDEC, host copies), vaapi (Linux)")
         ->capture_default_str();
 #endif
     sub->add_option("--level", opt->level,

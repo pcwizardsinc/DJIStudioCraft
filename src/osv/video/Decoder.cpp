@@ -232,6 +232,7 @@ AVHWDeviceType hwDeviceType(HwAccel hw) noexcept {
     case HwAccel::D3D11VA: return AV_HWDEVICE_TYPE_D3D11VA;
     case HwAccel::Cuda: return AV_HWDEVICE_TYPE_CUDA;
     case HwAccel::VideoToolbox: return AV_HWDEVICE_TYPE_VIDEOTOOLBOX;
+    case HwAccel::Vaapi: return AV_HWDEVICE_TYPE_VAAPI;
     case HwAccel::None:
     case HwAccel::Auto:
     default: return AV_HWDEVICE_TYPE_NONE;
@@ -250,6 +251,7 @@ const char* hwAccelName(HwAccel hw) noexcept {
     case HwAccel::Cuda: return "cuda";
     case HwAccel::Auto: return "auto";
     case HwAccel::VideoToolbox: return "videotoolbox";
+    case HwAccel::Vaapi: return "vaapi";
     }
     return "none";
 }
@@ -275,6 +277,9 @@ std::optional<HwAccel> parseHwAccel(std::string_view text) noexcept {
     }
     if (lower == "videotoolbox" || lower == "vt") {
         return HwAccel::VideoToolbox;
+    }
+    if (lower == "vaapi" || lower == "va-api" || lower == "va") {
+        return HwAccel::Vaapi;
     }
     return std::nullopt;
 }
@@ -1438,6 +1443,11 @@ struct HevcStreamDecoder::Impl {
             // macOS has neither NVDEC nor Direct3D; VideoToolbox is the
             // hardware HEVC decoder on every Apple Silicon and T2 Mac.
             attempts = {HwAccel::VideoToolbox};
+#elif defined(__linux__)
+            // Linux has no Direct3D; VA-API serves AMD and Intel GPUs, NVDEC
+            // NVIDIA's.  NVDEC first, as on Windows: where both exist (an
+            // NVIDIA laptop with Intel graphics) the discrete GPU decodes.
+            attempts = {HwAccel::Cuda, HwAccel::Vaapi};
 #else
             attempts = {HwAccel::Cuda, HwAccel::D3D11VA};
 #endif
@@ -1993,6 +2003,8 @@ std::vector<std::string> HevcStreamDecoder::availableHwAccels() {
             names.emplace_back(hwAccelName(HwAccel::Cuda));
         } else if (t == AV_HWDEVICE_TYPE_VIDEOTOOLBOX) {
             names.emplace_back(hwAccelName(HwAccel::VideoToolbox));
+        } else if (t == AV_HWDEVICE_TYPE_VAAPI) {
+            names.emplace_back(hwAccelName(HwAccel::Vaapi));
         }
     }
     return names;

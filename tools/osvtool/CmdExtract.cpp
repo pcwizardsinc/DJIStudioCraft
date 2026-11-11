@@ -468,7 +468,7 @@ void registerExtractCommand(CLI::App& app, CommandContext& ctx) {
 #if defined(__APPLE__)
     sub->add_option("--hw", opt->hw, "Decoder for --frame: none, videotoolbox, auto")->capture_default_str();
 #else
-    sub->add_option("--hw", opt->hw, "Decoder for --frame: none, d3d11va, cuda, auto")->capture_default_str();
+    sub->add_option("--hw", opt->hw, "Decoder for --frame: none, d3d11va, cuda, vaapi (Linux), auto")->capture_default_str();
 #endif
     sub->add_flag("--container-samples", opt->containerSamples,
                   "Feed samples from the OpenOSV container parser instead of libavformat (--frame)");

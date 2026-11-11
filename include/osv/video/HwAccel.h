@@ -26,7 +26,11 @@ enum class HwAccel : std::uint8_t {
     Auto = 3,     ///< Try Cuda, then D3D11VA (macOS: VideoToolbox), then None.
     /// Apple's VideoToolbox through FFmpeg's hwaccel (macOS).  Frames come
     /// back to host memory as P010, exactly like the D3D11VA path.
-    VideoToolbox = 4
+    VideoToolbox = 4,
+    /// VA-API through FFmpeg's hwaccel (Linux: AMD and Intel GPUs, through
+    /// Mesa or Intel's media driver).  Frames come back to host memory as
+    /// P010, exactly like the D3D11VA and VideoToolbox paths.
+    Vaapi = 5
 };
 
 /// The hardware back-end of this platform whose frames come back to host
@@ -34,6 +38,8 @@ enum class HwAccel : std::uint8_t {
 /// the importer's host-frame path and its analyses try before software.
 #if defined(__APPLE__)
 inline constexpr HwAccel kHostFrameHwAccel = HwAccel::VideoToolbox;
+#elif defined(__linux__)
+inline constexpr HwAccel kHostFrameHwAccel = HwAccel::Vaapi;
 #else
 inline constexpr HwAccel kHostFrameHwAccel = HwAccel::D3D11VA;
 #endif

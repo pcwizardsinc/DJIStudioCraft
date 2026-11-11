@@ -158,7 +158,7 @@ struct RenderOptions {
     /// byte-identical; a video carries no alpha and says so.
     bool alpha = false;
     std::string ffmpeg;
-    std::string codec = "hevc_nvenc";
+    std::string codec = "auto";
     int crf = 18;
     bool noAudio = false;
     // ---- 360 metadata ---------------------------------------------------------
@@ -616,7 +616,26 @@ public:
             fo.width = static_cast<std::uint32_t>(w);
             fo.height = static_cast<std::uint32_t>(h);
             fo.fps = fps;
-            fo.codec = o.codec;
+            // [DJI-Craft] "auto": probe for the best HEVC encoder this machine
+            // can actually run, so an AMD or Intel box never commits to
+            // hevc_nvenc and dies at the first frame.  The probe mirrors the
+            // GUI's preference order and is cached, so it costs one short
+            // ffmpeg run per process.  A name given with --codec is honoured
+            // as-is (with libx265 as the pipe's own fallback, as before).
+            if (o.codec == "auto") {
+                static const std::vector<std::string> kPreference = {
+                    "hevc_nvenc", "hevc_vaapi", "hevc_qsv", "hevc_amf", "hevc_videotoolbox", "libx265"};
+                const std::string best =
+                    io::FfmpegPipeWriter::bestHevcEncoder(pathFromUtf8(o.ffmpeg), kPreference, o.crf);
+                if (best.empty()) {
+                    std::fprintf(stderr, "error: no working HEVC encoder found (is ffmpeg installed?)\n");
+                    return kExitRuntime;
+                }
+                fo.codec = best;
+                osv::log::info("render: encoder '{}' (auto-selected)", best);
+            } else {
+                fo.codec = o.codec;
+            }
             fo.crf = o.crf;
             fo.transfer = transfer == color::OutputTransfer::HLG      ? io::PipeTransfer::HLG
                           : transfer == color::OutputTransfer::Rec709 ? io::PipeTransfer::Rec709
@@ -2092,7 +2111,10 @@ void registerRenderCommand(CLI::App& app, CommandContext& ctx) {
                       "Write the coverage alpha as a 4th channel into .exr / .tif / .png stills (default: RGB "
                       "only; videos carry no alpha)");
     outGeom->add_option("--ffmpeg", opt->ffmpeg, "ffmpeg executable for .mp4 output");
-    outGeom->add_option("--codec", opt->codec, "Video encoder (hevc_nvenc, libx265, ...)")->default_str("hevc_nvenc");
+    outGeom->add_option("--codec", opt->codec,
+                     "Video encoder: auto (probe for the best this machine can run), or a name "
+                     "(hevc_nvenc, hevc_vaapi, hevc_qsv, hevc_amf, hevc_videotoolbox, libx265)")
+        ->default_str("auto");
     outGeom->add_option("--crf", opt->crf, "Quality (crf / cq)")->default_val(18);
     outGeom->add_flag("--no-audio", opt->noAudio, "Do not copy the source audio into the .mp4");
     // On by default: an equirect video without the tag plays as a flat

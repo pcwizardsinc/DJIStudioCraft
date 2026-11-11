@@ -101,6 +101,14 @@ public:
     /// Resolve the ffmpeg executable (options.ffmpegExe, OSV_FFMPEG_EXE, PATH).
     static std::filesystem::path resolveExecutable(const std::filesystem::path& preferred);
 
+    /// Name of the first HEVC encoder in `preference` that this ffmpeg can
+    /// actually start (each is test-run once on a 5-frame synthetic clip with
+    /// the very quality flags buildFfmpegArgs would use), or an empty string
+    /// when none works.  The probe result is cached per ffmpeg path, so a
+    /// render pays for it once.  `ffmpegExe` is resolved as in open().
+    [[nodiscard]] static std::string bestHevcEncoder(const std::filesystem::path& ffmpegExe,
+                                                     const std::vector<std::string>& preference, int crf);
+
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;
