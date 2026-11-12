@@ -17,6 +17,7 @@
 #pragma once
 
 #include "CommandBuilder.h"
+#include "PreviewEngine.h"
 #include "Project.h"
 #include "Queue.h"
 #include "Runner.h"
@@ -140,6 +141,8 @@ private:
     void drawPreview(ImVec2 size);
     void drawInspector(ImVec2 size);
     void drawTimeline(ImVec2 size);
+    void drawToolRail(ImVec2 size);
+    void drawTransport(ImVec2 size);
     void drawModeToggle(float x, float y, float width);
     /// Replace the project's clips with the current queue (New / first entry
     /// into editor mode), or merge the queue into the open project.
@@ -170,6 +173,28 @@ private:
     Project m_project;                 ///< The open document (editor mode).
     std::size_t m_editClip = 0;        ///< Index of the selected clip in m_project.
     std::int64_t m_playhead = 0;       ///< Timeline position, frames (Phase 3/4).
+    int m_editorTool = 0;              ///< Selected tool-rail tab (File, Music, ...).
+
+    // ---- live preview (Phase 3) ---------------------------------------------------------
+    PreviewEngine m_preview;           ///< Renders the selected clip in-process.
+    std::uint64_t m_previewReqId = 0;  ///< Monotonic request id, newest wins.
+    std::uint64_t m_previewShownId = 0;///< Id of the frame now in the texture.
+    unsigned m_previewTexture = 0;     ///< GL texture holding the latest frame.
+    int m_previewTexW = 0;             ///< Texture dimensions, to know when to reallocate.
+    int m_previewTexH = 0;
+    std::string m_previewError;        ///< Last render error, shown in the pane.
+    std::string m_previewDevice;       ///< Renderer of the shown frame ("cpu"...).
+    // The request state the current texture was rendered for, so we only
+    // re-render when something actually changed (clip, frame, framing, size).
+    std::filesystem::path m_previewClip;
+    std::int64_t m_previewFrame = -1;
+    double m_previewYaw = 0.0, m_previewPitch = 0.0, m_previewFov = 0.0, m_previewExposure = 0.0;
+    int m_previewW = 0, m_previewH = 0;
+    bool m_previewDragging = false;    ///< Mid drag-to-pan in the preview.
+    /// Post a preview request for the selected clip if anything changed.
+    void updatePreview(int paneW, int paneH);
+    /// Upload an RGBA frame to m_previewTexture (GL thread only).
+    void uploadPreviewFrame(const PreviewFrame& frame);
 
     ProcessRunner m_runner;
     Toolchain m_toolchain;

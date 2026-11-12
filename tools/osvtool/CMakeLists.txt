@@ -32,30 +32,11 @@ target_include_directories(osvtool PRIVATE "${CMAKE_SOURCE_DIR}/plugins/common")
 #  header is ever included.  A render is then the frame Premiere and Resolve
 #  show for the same Source Settings, not a second implementation of it.
 # -----------------------------------------------------------------------------
-set(_osvtool_importer "${CMAKE_SOURCE_DIR}/plugins/importer")
-set(_osvtool_common   "${CMAKE_SOURCE_DIR}/plugins/common")
-target_sources(osvtool PRIVATE
-  "${_osvtool_importer}/ImporterInstance.cpp"
-  "${_osvtool_importer}/SteadyStage.cpp"
-  "${_osvtool_importer}/SceneLightStage.cpp"
-  "${_osvtool_importer}/FlareStage.cpp"
-  "${_osvtool_importer}/ProtectorGuard.cpp"
-  "${_osvtool_importer}/ImporterAudio.cpp"
-  "${_osvtool_importer}/ImporterGpuFrame.cpp"
-  # No direct GPU path outside Premiere (the Open 360 Reframe effect's).
-  "${_osvtool_importer}/EngineNoDirect.cpp"
-  "${_osvtool_common}/HostContext.cpp"
-  "${_osvtool_common}/PixelCopy.cpp")
-if(WIN32)
-  target_sources(osvtool PRIVATE "${_osvtool_common}/PluginLog.cpp")
-else()
-  target_sources(osvtool PRIVATE "${_osvtool_common}/PluginLogPosix.cpp")
-endif()
-target_include_directories(osvtool PRIVATE "${_osvtool_importer}")
-target_compile_definitions(osvtool PRIVATE OSV_CLIP_ENGINE_WITHOUT_PREMIERE=1)
-if(TARGET osv_ffmpeg)
-  target_link_libraries(osvtool PRIVATE osv_ffmpeg)  # the clip engine decodes its own audio track
-endif()
+# The importer's clip engine now lives in the shared osv_clipengine library
+# (plugins/clipengine), which carries these sources, the include paths, the
+# OSV_CLIP_ENGINE_WITHOUT_PREMIERE define and the engine modules.  osvtool and
+# the editor both link it so they render identically.
+target_link_libraries(osvtool PRIVATE osv_clipengine)
 if(WIN32 AND OSV_ENABLE_CUDA)
   # The clip engine drives NVDEC through the CUDA DRIVER API.  nvcuda.dll
   # comes with NVIDIA's display driver, so it is DELAY-loaded: osvtool must

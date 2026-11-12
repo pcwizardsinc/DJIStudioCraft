@@ -675,6 +675,39 @@ TEST_CASE("project: survives a JSON round trip, per-clip edits kept", "[gui]") {
     CHECK(pathToUtf8(back->audioBed) == "/music/bed.mp3");
 }
 
+TEST_CASE("project: inspector grade fields round-trip", "[gui]") {
+    GuiSettings defaults;
+    Project pr = projectFromClips({"/clips/A.OSV"}, defaults);
+    GuiSettings& e = pr.clips[0].edit;
+    e.gradeEnabled = true;
+    e.exposure = 0.35;
+    e.contrast = -0.2;
+    e.temperature = 0.5;
+    e.saturation = -0.1;
+    e.fpvMode = true;
+    e.opticalFlowStitch = false;
+    e.dewarp = false;
+    e.speed = 0.5;
+    e.filterLut = "Vista Pro";
+    e.filterIntensity = 80.0;
+
+    std::string err;
+    const std::optional<Project> back = projectFromJson(projectToJson(pr), &err);
+    REQUIRE(back.has_value());
+    const GuiSettings& g = back->clips[0].edit;
+    CHECK(g.gradeEnabled);
+    CHECK(g.exposure == Catch::Approx(0.35));
+    CHECK(g.contrast == Catch::Approx(-0.2));
+    CHECK(g.temperature == Catch::Approx(0.5));
+    CHECK(g.saturation == Catch::Approx(-0.1));
+    CHECK(g.fpvMode);
+    CHECK_FALSE(g.opticalFlowStitch);
+    CHECK_FALSE(g.dewarp);
+    CHECK(g.speed == Catch::Approx(0.5));
+    CHECK(g.filterLut == "Vista Pro");
+    CHECK(g.filterIntensity == Catch::Approx(80.0));
+}
+
 TEST_CASE("project: a newer schema is refused", "[gui]") {
     const std::string json = R"({"schema": 999, "clips": []})";
     std::string error;

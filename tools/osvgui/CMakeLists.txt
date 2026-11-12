@@ -36,13 +36,14 @@ add_executable(osvgui WIN32
   main.cpp
   Ui.cpp
   Editor.cpp
+  PreviewEngine.cpp
   Widgets.cpp
   Style.cpp
   Runner.cpp
   Toolchain.cpp
   Platform.cpp
   Icon.cpp)
-target_link_libraries(osvgui PRIVATE osvgui_core imgui::imgui glfw OpenGL::GL osv_warnings)
+target_link_libraries(osvgui PRIVATE osvgui_core osv_clipengine imgui::imgui glfw OpenGL::GL osv_warnings)
 target_compile_features(osvgui PRIVATE cxx_std_20)
 set_target_properties(osvgui PROPERTIES FOLDER "tools")
 

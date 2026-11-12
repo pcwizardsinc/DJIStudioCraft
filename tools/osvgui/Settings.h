@@ -155,7 +155,36 @@ struct GuiSettings {
     std::string tone = "aces-bright";     ///< kTones
     std::string look = "dji";             ///< kLooks
     std::string stab = "smooth-horizon";  ///< kStabs (the Source Settings default)
-    bool flare = true;                    ///< Sun ghost removal.
+    bool flare = true;                    ///< Sun ghost removal (selfie-stick / sun ghost erase).
+
+    // ---- Adjust tab: colour grade (Phase 6) -----------------------------------------
+    // Fine grade applied on top of the D-Log M recovery, matching DJI Studio's
+    // Adjust > Basic panel.  All default to 0 (no change); ranges match the UI.
+    bool gradeEnabled = false;      ///< The whole Basic Correction block on/off.
+    double exposure = 0.0;          ///< -1..1 stops-ish.
+    double luminance = 0.0;         ///< -1..1.
+    double contrast = 0.0;          ///< -1..1.
+    double highlights = 0.0;        ///< -1..1.
+    double shadows = 0.0;           ///< -1..1.
+    double whites = 0.0;            ///< -1..1.
+    double blacks = 0.0;            ///< -1..1.
+    double temperature = 0.0;       ///< -1..1 (cool..warm).
+    double tint = 0.0;              ///< -1..1 (green..magenta).
+    double saturation = 0.0;        ///< -1..1.
+    double vibrance = 0.0;          ///< -1..1.
+
+    // ---- Image tab: stitching / lens (Phase 6) --------------------------------------
+    bool fpvMode = false;           ///< FPV (rolls with the aircraft) vs Follow (level).
+    bool chromaticAberration = true;///< Chromatic aberration correction.
+    bool opticalFlowStitch = true;  ///< Optical-flow stitching.
+    bool dewarp = true;             ///< Distortion / dewarp optimization.
+
+    // ---- Speed tab (Phase 6) --------------------------------------------------------
+    double speed = 1.0;             ///< Playback speed multiplier (0.25..4).
+
+    // ---- Filter tab (Phase 6) -------------------------------------------------------
+    std::string filterLut;          ///< Applied LUT name, empty = none.
+    double filterIntensity = 100.0; ///< 0..100.
     /// Start from the Source Settings saved in Premiere; colour, stabilisation
     /// and sun ghost removal are then left to them (CommandBuilder.h).
     bool useUserDefaults = false;

@@ -157,6 +157,9 @@ configure_file("${CMAKE_SOURCE_DIR}/include/osv/core/Version.h.in"
 add_subdirectory(src)
 
 if(OSV_BUILD_TOOLS)
+  # The importer's clip engine as a reusable library, shared by osvtool and the
+  # editor so both render clips in-process the same way.
+  add_subdirectory(plugins/clipengine)
   add_subdirectory(tools/osvtool)
   # osvgui_core (always, for the unit tests) and, with OSV_BUILD_GUI, osvgui.
   add_subdirectory(tools/osvgui)

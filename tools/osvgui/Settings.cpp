@@ -286,6 +286,30 @@ std::string settingsToJsonText(const GuiSettings& s) noexcept {
         motion["flare"] = s.flare;
         motion["useUserDefaults"] = s.useUserDefaults;
 
+        // Adjust / Image / Speed / Filter (the editor's inspector tabs).
+        Json& grade = root["grade"];
+        grade["enabled"] = s.gradeEnabled;
+        grade["exposure"] = s.exposure;
+        grade["luminance"] = s.luminance;
+        grade["contrast"] = s.contrast;
+        grade["highlights"] = s.highlights;
+        grade["shadows"] = s.shadows;
+        grade["whites"] = s.whites;
+        grade["blacks"] = s.blacks;
+        grade["temperature"] = s.temperature;
+        grade["tint"] = s.tint;
+        grade["saturation"] = s.saturation;
+        grade["vibrance"] = s.vibrance;
+        Json& image = root["image"];
+        image["fpvMode"] = s.fpvMode;
+        image["chromaticAberration"] = s.chromaticAberration;
+        image["opticalFlowStitch"] = s.opticalFlowStitch;
+        image["dewarp"] = s.dewarp;
+        root["speed"] = s.speed;
+        Json& filter = root["filter"];
+        filter["lut"] = s.filterLut;
+        filter["intensity"] = s.filterIntensity;
+
         Json& encoding = root["encoding"];
         encoding["codec"] = s.codec;
         encoding["crf"] = s.crf;
@@ -362,6 +386,31 @@ bool settingsFromJsonText(std::string_view text, GuiSettings& out, std::string* 
             readString(*m, "stab", out.stab);
             readBool(*m, "flare", out.flare);
             readBool(*m, "useUserDefaults", out.useUserDefaults);
+        }
+        if (const Json* g = section(root, "grade")) {
+            readBool(*g, "enabled", out.gradeEnabled);
+            readDouble(*g, "exposure", out.exposure);
+            readDouble(*g, "luminance", out.luminance);
+            readDouble(*g, "contrast", out.contrast);
+            readDouble(*g, "highlights", out.highlights);
+            readDouble(*g, "shadows", out.shadows);
+            readDouble(*g, "whites", out.whites);
+            readDouble(*g, "blacks", out.blacks);
+            readDouble(*g, "temperature", out.temperature);
+            readDouble(*g, "tint", out.tint);
+            readDouble(*g, "saturation", out.saturation);
+            readDouble(*g, "vibrance", out.vibrance);
+        }
+        if (const Json* im = section(root, "image")) {
+            readBool(*im, "fpvMode", out.fpvMode);
+            readBool(*im, "chromaticAberration", out.chromaticAberration);
+            readBool(*im, "opticalFlowStitch", out.opticalFlowStitch);
+            readBool(*im, "dewarp", out.dewarp);
+        }
+        readDouble(root, "speed", out.speed);
+        if (const Json* fl = section(root, "filter")) {
+            readString(*fl, "lut", out.filterLut);
+            readDouble(*fl, "intensity", out.filterIntensity);
         }
         if (const Json* e = section(root, "encoding")) {
             readString(*e, "codec", out.codec);
